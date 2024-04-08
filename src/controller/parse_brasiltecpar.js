@@ -62,9 +62,6 @@ const ParserBrasiltecpar = async (req, res) => {
     const audioSegmentIndex = audio.segmentIndex;
     const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
 
-
-    logger.info(`Total Segments number: ${totalSegmentNum}`);
-
     // Get init segment information
     videoData.push({
         segment: 0,
@@ -79,34 +76,79 @@ const ParserBrasiltecpar = async (req, res) => {
     });
 
     // get lateseet segments
-    let catchedSegments = 0;
-    let i = 0;
-    const audioSegmentList = [];
-    const videoSegmentList = [];
-    let found = false;
+    let i = 1;
+    const audioIndexList = [];
+    const videoIndexList = [];
+
+    let videoSegmentOffset = -1;
+    let audioSegmentOffset = -1;
 
     while (true) {
         const videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
         const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
         const digitedIndex = videoSegmentNum.replace(/\D/g, '');
+        videoIndexList.push(digitedIndex);
+        const sameAudioFoundIdx = audioIndexList.indexOf(digitedIndex);
+        if (sameAudioFoundIdx != -1) {
+            videoSegmentOffset = i - 1;
+            logger.info(`video is ${i - 1} behind audio`);
+            break;
+        }
 
         const audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
         const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
         const audiodigitedIndex = audioSegmentNum.replace(/\D/g, '');
+        audioIndexList.push(audiodigitedIndex);
+        const sameVideoFoundIdx = videoIndexList.indexOf(audiodigitedIndex);
+        if (sameVideoFoundIdx != -1) {
+            logger.info(`audio is ${i - 1} behind video`);
+            audioSegmentOffset = i - 1;
+            break;
+        }
 
-        audioSegmentList.push({
-            segment: parseInt(audiodigitedIndex),
+        i++;
+    }
+
+    if (videoSegmentOffset == -1 && audioSegmentOffset == -1) {
+        logger.error(`No matched segment found in video & audio stream`);
+        return res.json({});
+    }
+
+    for (let i = numSegments; i > 0; i--) {
+        let videoUri = [];
+        let audioUri = [];
+        let videoSegIdx = -1;
+        let audioSegIdx = -1;
+
+        if (videoSegmentOffset != -1) {
+            videoUri = videoSegmentIndex.get(videototalNum - i - videoSegmentOffset).getUrisInner();
+            const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
+            videoSegIdx = videoSegmentNum.replace(/\D/g, '');
+
+            audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
+            const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
+            audioSegIdx = audioSegmentNum.replace(/\D/g, '');
+        } else if (audioSegmentOffset != -1) {
+            videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
+            const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
+            videoSegIdx = videoSegmentNum.replace(/\D/g, '');
+
+            audioUri = audioSegmentIndex.get(audiototalNum - i - audioSegmentOffset).getUrisInner();
+            const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
+            audioSegIdx = audioSegmentNum.replace(/\D/g, '');
+        }
+
+        audioData.push({
+            segment: parseInt(audioSegIdx),
             type: "media",
             uri: audioUri[0]
         });
 
-        videoSegmentList.push({
-            segment: parseInt(digitedIndex),
+        videoData.push({
+            segment: parseInt(videoSegIdx),
             type: "media",
             uri: videoUri[0]
         });
-
-        i++;
     }
 
     responseData.video = videoData;

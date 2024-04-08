@@ -132,7 +132,6 @@ class DashMpdParser {
     async requestManifest_(baseUrl, requestHeader) {
         try {
             const response = await axios.get(this.manifestUri_, {requestHeader});
-            logger.info('fetching mpd manifest content...');
             const mpdBuffer = Buffer.from(response.data);
 
             await this.parseManifest_(mpdBuffer, baseUrl);
