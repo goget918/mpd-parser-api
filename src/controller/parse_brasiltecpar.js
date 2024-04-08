@@ -21,6 +21,8 @@ const ParserBrasiltecpar = async (req, res) => {
     const config = PlayerConfiguration.createDefault().manifest;
     mpdParser = new DashMpdParser();
     mpdParser.configure(config);
+
+    logger.info(`Parsing mpd ${mpdUrl} with rep id ${videoRepId}, ${audioRepId}`);
     await mpdParser.start(mpdUrl, baseUrl, requestHeader);
 
     const parsedResult = mpdParser.manifest_;
@@ -31,8 +33,20 @@ const ParserBrasiltecpar = async (req, res) => {
 
     let targetStream = null;
 
-    const audio = parsedResult.variants[0].audio;
-    const video = parsedResult.variants[0].video;
+    for (const variant of parsedResult.variants) {
+        if (variant.audio.originalId == audioRepId &&
+            variant.video.originalId == videoRepId) {
+            targetStream = variant;
+            break;
+        }
+    }
+
+    if (!targetStream) {
+        return res.json({});
+    }
+
+    const audio = targetStream.audio;
+    const video = targetStream.video;
 
     await audio.createSegmentIndex();
     await video.createSegmentIndex();
@@ -41,32 +55,22 @@ const ParserBrasiltecpar = async (req, res) => {
     const videoData = [];
     const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
     const videoSegmentIndex = video.segmentIndex;
-    const totalNum = videoSegmentIndex.indexes_[0].getNumReferences();
-
-    logger.info(`${totalNum} segments are available in this mpd`);
-
-    videoData.push({
-        segment: 0,
-        type: "initialization",
-        uri: videoInitSegmentIndex.getUris()[0]
-    });
-
-    // get lateseet 10 segments
-    for (let i = 10; i > 0; i--) {
-        const uri = videoSegmentIndex.get(totalNum - i).getUrisInner();
-        const segmentNum = path.basename(uri[0], path.extname(uri[0]));
-
-        videoData.push({
-            segment: segmentNum,
-            type: "media",
-            uri: uri[0]
-        });
-    }
+    const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
 
     const audioData = [];
     const audioInitSegmentIndex = audio.segmentIndex.indexes_[0].initSegmentReference_;
     const audioSegmentIndex = audio.segmentIndex;
     const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
+
+
+    logger.info(`Total Segments number: ${totalSegmentNum}`);
+
+    // Get init segment information
+    videoData.push({
+        segment: 0,
+        type: "initialization",
+        uri: videoInitSegmentIndex.getUris()[0]
+    });
 
     audioData.push({
         segment: 0,
@@ -74,16 +78,35 @@ const ParserBrasiltecpar = async (req, res) => {
         uri: audioInitSegmentIndex.getUris()[0]
     });
 
-    // get lateseet 10 segments
-    for (let i = 10; i > 0; i--) {
-        const uri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
-        const segmentNum = path.basename(uri[0], path.extname(uri[0]));
+    // get lateseet segments
+    let catchedSegments = 0;
+    let i = 0;
+    const audioSegmentList = [];
+    const videoSegmentList = [];
+    let found = false;
 
-        audioData.push({
-            segment: segmentNum,
+    while (true) {
+        const videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
+        const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
+        const digitedIndex = videoSegmentNum.replace(/\D/g, '');
+
+        const audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
+        const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
+        const audiodigitedIndex = audioSegmentNum.replace(/\D/g, '');
+
+        audioSegmentList.push({
+            segment: parseInt(audiodigitedIndex),
             type: "media",
-            uri: uri[0]
+            uri: audioUri[0]
         });
+
+        videoSegmentList.push({
+            segment: parseInt(digitedIndex),
+            type: "media",
+            uri: videoUri[0]
+        });
+
+        i++;
     }
 
     responseData.video = videoData;

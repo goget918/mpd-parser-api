@@ -4,6 +4,7 @@ const logger = require('../util/logger');
 const Functional = require('../util/functional');
 const TXml = require('../util/txml');
 const AbortableOperation = require('../util/abortable_operation');
+const { time } = require('console');
 
 
 /**
@@ -246,9 +247,7 @@ class MpdUtils {
 
                 if (Math.abs(delta / timescale) >=
                     ManifestParserUtils.GAP_OVERLAP_TOLERANCE_SECONDS) {
-                    logger.warning(
-                        'SegmentTimeline contains a large gap/overlap:',
-                        'the content may have errors in it.', timePoint);
+                    logger.info(`SegmentTimeline contains a large gap/overlap: the content may have errors in it. ${timePoint}`);
                 }
 
                 timeline[timeline.length - 1].end = startTime / timescale;
