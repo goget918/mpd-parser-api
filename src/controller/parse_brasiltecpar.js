@@ -4,7 +4,6 @@ const path = require('path');
 
 const PlayerConfiguration = require('../util/player_configuration');
 const DashMpdParser = require('../dash_parser');
-const { parse } = require('path');
 const logger = require('../util/logger');
 
 const ParserBrasiltecpar = async (req, res) => {
@@ -53,14 +52,16 @@ const ParserBrasiltecpar = async (req, res) => {
 
     const responseData = {};
     const videoData = [];
+    // will be specified by input param
+    const segmentBufferLen = 10;
     const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
     const videoSegmentIndex = video.segmentIndex;
-    const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
+    const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences() - segmentBufferLen;
 
     const audioData = [];
     const audioInitSegmentIndex = audio.segmentIndex.indexes_[0].initSegmentReference_;
     const audioSegmentIndex = audio.segmentIndex;
-    const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
+    const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences() - segmentBufferLen;
 
     // Get init segment information
     videoData.push({
@@ -89,25 +90,32 @@ const ParserBrasiltecpar = async (req, res) => {
         const digitedIndex = videoSegmentNum.replace(/\D/g, '');
         videoIndexList.push(digitedIndex);
         const sameAudioFoundIdx = audioIndexList.indexOf(digitedIndex);
-        if (sameAudioFoundIdx != -1) {
-            videoSegmentOffset = i - 1;
-            logger.info(`video is ${i - 1} behind audio`);
-            break;
-        }
 
         const audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
         const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
         const audiodigitedIndex = audioSegmentNum.replace(/\D/g, '');
         audioIndexList.push(audiodigitedIndex);
         const sameVideoFoundIdx = videoIndexList.indexOf(audiodigitedIndex);
+
+        if (sameAudioFoundIdx != -1) {
+            videoSegmentOffset = i - 1;
+            audioSegmentOffset = sameAudioFoundIdx;
+            logger.info(`video is ${i - 1} behind audio`);
+            break;
+        }
+
         if (sameVideoFoundIdx != -1) {
             logger.info(`audio is ${i - 1} behind video`);
             audioSegmentOffset = i - 1;
+            videoSegmentOffset = sameVideoFoundIdx;
             break;
         }
 
         i++;
     }
+
+    console.log(videoIndexList);
+    console.log(audioIndexList);
 
     if (videoSegmentOffset == -1 && audioSegmentOffset == -1) {
         logger.error(`No matched segment found in video & audio stream`);
@@ -120,23 +128,13 @@ const ParserBrasiltecpar = async (req, res) => {
         let videoSegIdx = -1;
         let audioSegIdx = -1;
 
-        if (videoSegmentOffset != -1) {
-            videoUri = videoSegmentIndex.get(videototalNum - i - videoSegmentOffset).getUrisInner();
-            const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
-            videoSegIdx = videoSegmentNum.replace(/\D/g, '');
+        videoUri = videoSegmentIndex.get(videototalNum - i - videoSegmentOffset).getUrisInner();
+        const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
+        videoSegIdx = videoSegmentNum.replace(/\D/g, '');
 
-            audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
-            const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
-            audioSegIdx = audioSegmentNum.replace(/\D/g, '');
-        } else if (audioSegmentOffset != -1) {
-            videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
-            const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
-            videoSegIdx = videoSegmentNum.replace(/\D/g, '');
-
-            audioUri = audioSegmentIndex.get(audiototalNum - i - audioSegmentOffset).getUrisInner();
-            const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
-            audioSegIdx = audioSegmentNum.replace(/\D/g, '');
-        }
+        audioUri = audioSegmentIndex.get(audiototalNum - i - audioSegmentOffset).getUrisInner();
+        const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
+        audioSegIdx = audioSegmentNum.replace(/\D/g, '');
 
         audioData.push({
             segment: parseInt(audioSegIdx),
@@ -149,6 +147,8 @@ const ParserBrasiltecpar = async (req, res) => {
             type: "media",
             uri: videoUri[0]
         });
+
+        console.log(videoSegIdx, audioSegIdx);
     }
 
     responseData.video = videoData;
