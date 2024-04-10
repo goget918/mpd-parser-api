@@ -68,7 +68,7 @@ const ParserBrasiltecpar = async (req, res) => {
     const videoData = [];
     // will be specified by input param
     const segmentBufferLen = 10;
-    const timeDuration = 60;
+    const timeDuration = 2;
     const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
     const videoSegmentIndex = video.segmentIndex;
     const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
