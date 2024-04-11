@@ -14,8 +14,8 @@ const getSegmentTimelineListForDuration = (presentationStartTime, timeLineList, 
         durationSum += timeLineList[i].end - timeLineList[i].start;
         segmentNum++;
         segmentTimelineList.push({
-            start: presentationStartTime + timeLineList[i].start,
-            stop: presentationStartTime + timeLineList[i].end
+            start: parseInt(presentationStartTime + timeLineList[i].start),
+            stop: parseInt(presentationStartTime + timeLineList[i].end)
         })
         if (durationSum >= duration) {
             break;
@@ -47,6 +47,7 @@ const ParserBrasiltecpar = async (req, res) => {
 
     const parsedResult = mpdParser.manifest_;
     const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
+    const maxSegmentDuration = parsedResult.presentationTimeline.maxSegmentDuration_;
 
     if (!parsedResult) {
         return res.json({});
@@ -138,6 +139,7 @@ const ParserBrasiltecpar = async (req, res) => {
         });
     }
 
+    responseData.maxSegmentDuration  = maxSegmentDuration;
     responseData.video = videoData;
     responseData.audio = audioData;
 
