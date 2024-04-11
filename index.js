@@ -7,7 +7,7 @@ const logger = require('./src/util/logger');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 8086;
+const PORT = process.env.PORT || 8006;
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({
