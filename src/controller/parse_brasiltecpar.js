@@ -6,16 +6,24 @@ const PlayerConfiguration = require('../util/player_configuration');
 const DashMpdParser = require('../dash_parser');
 const logger = require('../util/logger');
 
-const getSegmentTimelineListForDuration = (presentationStartTime, timeLineList, duration) => {
+let segmentDuration = 0;
+
+const getSegmentTimelineListForDuration = (presentationStartTime, timeShiftBufferDepth, timeLineList, duration) => {
     let durationSum = 0;
     let segmentNum = 0;
     let segmentTimelineList = [];
+    segmentDuration = 0;
+    const timeShiftBufferDepthInSec = timeShiftBufferDepth / 1000;
     for (let i = timeLineList.length - 1; i >= 0; i--) {
         durationSum += timeLineList[i].end - timeLineList[i].start;
+        const durationPerSegment = parseInt(timeLineList[i].end - timeLineList[i].start);
+        if (durationPerSegment > segmentDuration)
+            segmentDuration = durationPerSegment;
+
         segmentNum++;
         segmentTimelineList.push({
-            start: parseInt(presentationStartTime + timeLineList[i].start),
-            stop: parseInt(presentationStartTime + timeLineList[i].end)
+            start: parseInt(presentationStartTime + timeLineList[i].start + timeShiftBufferDepthInSec),
+            stop: parseInt(presentationStartTime + timeLineList[i].end + timeShiftBufferDepthInSec)
         })
         if (durationSum >= duration) {
             break;
@@ -48,6 +56,7 @@ const ParserBrasiltecpar = async (req, res) => {
     const parsedResult = mpdParser.manifest_;
     const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
     const maxSegmentDuration = parsedResult.presentationTimeline.maxSegmentDuration_;
+    const timeShiftBufferDepth = parsedResult.presentationTimeline.segmentAvailabilityDuration_;
 
     if (!parsedResult) {
         return res.json({});
@@ -84,7 +93,7 @@ const ParserBrasiltecpar = async (req, res) => {
 
     const videoTimelines = videoSegmentIndex.indexes_[0].templateInfo_.timeline;
     
-    const videoSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, videoTimelines,  timeDuration);
+    const videoSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, videoTimelines,  timeDuration);
     const videoSegmentsNum = videoSegmentTimelineList.length;
 
     const audioData = [];
@@ -92,7 +101,7 @@ const ParserBrasiltecpar = async (req, res) => {
     const audioSegmentIndex = audio.segmentIndex;
     const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
     const audioTimelines = audioSegmentIndex.indexes_[0].templateInfo_.timeline;
-    const audioSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, audioTimelines, timeDuration);
+    const audioSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, audioTimelines, timeDuration);
     const audioSegmentsNum = audioSegmentTimelineList.length;
 
     logger.info(`returning ${videoSegmentsNum} video segments and ${audioSegmentsNum} audio ones for latest ${timeDuration} seconds..`);
@@ -139,7 +148,9 @@ const ParserBrasiltecpar = async (req, res) => {
         });
     }
 
-    responseData.maxSegmentDuration  = maxSegmentDuration;
+    responseData.maxSegmentDuration = maxSegmentDuration;
+    responseData.segmentDuration = segmentDuration;
+    responseData.timeShiftBufferDepth = timeShiftBufferDepth;
     responseData.video = videoData;
     responseData.audio = audioData;
 
