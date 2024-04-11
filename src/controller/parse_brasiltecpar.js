@@ -6,7 +6,6 @@ const PlayerConfiguration = require('../util/player_configuration');
 const DashMpdParser = require('../dash_parser');
 const logger = require('../util/logger');
 
-let segmentDuration = 0;
 
 const getSegmentTimelineListForDuration = (presentationStartTime, timeShiftBufferDepth, timeLineList, duration) => {
     let durationSum = 0;
@@ -17,13 +16,12 @@ const getSegmentTimelineListForDuration = (presentationStartTime, timeShiftBuffe
     for (let i = timeLineList.length - 1; i >= 0; i--) {
         durationSum += timeLineList[i].end - timeLineList[i].start;
         const durationPerSegment = parseInt(timeLineList[i].end - timeLineList[i].start);
-        if (durationPerSegment > segmentDuration)
-            segmentDuration = durationPerSegment;
 
         segmentNum++;
         segmentTimelineList.push({
             start: parseInt(presentationStartTime + timeLineList[i].start + timeShiftBufferDepthInSec),
-            stop: parseInt(presentationStartTime + timeLineList[i].end + timeShiftBufferDepthInSec)
+            stop: parseInt(presentationStartTime + timeLineList[i].end + timeShiftBufferDepthInSec),
+            duration: durationPerSegment
         })
         if (durationSum >= duration) {
             break;
@@ -126,10 +124,11 @@ const ParserBrasiltecpar = async (req, res) => {
         videoSegIdx = videoSegmentNum.replace(/\D/g, '');
 
         videoData.push({
-            segment: parseInt(videoSegIdx),
+            segment: videoSegmentTimelineList[i - 1].start,
             type: "media",
             start: videoSegmentTimelineList[i - 1].start,
             stop: videoSegmentTimelineList[i - 1].stop,
+            duration: videoSegmentTimelineList[i - 1].duration,
             uri: videoUri[0]
         });
     }
@@ -140,10 +139,11 @@ const ParserBrasiltecpar = async (req, res) => {
         audioSegIdx = audioSegmentNum.replace(/\D/g, '');
 
         audioData.push({
-            segment: parseInt(audioSegIdx),
+            segment: audioSegmentTimelineList[i - 1].start,
             type: "media",
             start: audioSegmentTimelineList[i - 1].start,
             stop: audioSegmentTimelineList[i - 1].stop,
+            duration: audioSegmentTimelineList[i - 1].duration,
             uri: audioUri[0]
         });
     }
