@@ -6,18 +6,23 @@ const PlayerConfiguration = require('../util/player_configuration');
 const DashMpdParser = require('../dash_parser');
 const logger = require('../util/logger');
 
-const getSegmentsNumberForDuration = (timeLineList, duration) => {
+const getSegmentTimelineListForDuration = (timeLineList, duration) => {
     let durationSum = 0;
     let segmentNum = 0;
+    let segmentTimelineList = [];
     for (let i = timeLineList.length - 1; i >= 0; i--) {
         durationSum += timeLineList[i].end - timeLineList[i].start;
         segmentNum++;
+        segmentTimelineList.push({
+            start: timeLineList[i].start,
+            stop: timeLineList[i].end
+        })
         if (durationSum >= duration) {
             break;
         }
     }
 
-    return segmentNum;
+    return segmentTimelineList;
 }
 
 const ParserBrasiltecpar = async (req, res) => {
@@ -27,6 +32,8 @@ const ParserBrasiltecpar = async (req, res) => {
     const audioRepId = payload.audio.representation_id;
     const requestHeader = payload.headers;
     const numSegments = payload.numSegments;
+    // const timeDuration = payload.bufferLength;
+    const timeDuration = 3;
 
     const parsedUrl = new url.URL(mpdUrl);
     const baseUrl = `${parsedUrl.protocol}//${parsedUrl.hostname}${parsedUrl.pathname}`
@@ -68,21 +75,23 @@ const ParserBrasiltecpar = async (req, res) => {
     const videoData = [];
     // will be specified by input param
     const segmentBufferLen = 10;
-    const timeDuration = 2;
+
     const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
     const videoSegmentIndex = video.segmentIndex;
     const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
 
     const videoTimelines = videoSegmentIndex.indexes_[0].templateInfo_.timeline;
     
-    const videoSegmentsNum = getSegmentsNumberForDuration(videoTimelines,  timeDuration);
+    const videoSegmentTimelineList = getSegmentTimelineListForDuration(videoTimelines,  timeDuration);
+    const videoSegmentsNum = videoSegmentTimelineList.length;
 
     const audioData = [];
     const audioInitSegmentIndex = audio.segmentIndex.indexes_[0].initSegmentReference_;
     const audioSegmentIndex = audio.segmentIndex;
     const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
     const audioTimelines = audioSegmentIndex.indexes_[0].templateInfo_.timeline;
-    const audioSegmentsNum = getSegmentsNumberForDuration(audioTimelines, timeDuration)
+    const audioSegmentTimelineList = getSegmentTimelineListForDuration(audioTimelines, timeDuration);
+    const audioSegmentsNum = audioSegmentTimelineList.length;
 
     logger.info(`returning ${videoSegmentsNum} video segments and ${audioSegmentsNum} audio ones for latest ${timeDuration} seconds..`);
 
@@ -107,6 +116,8 @@ const ParserBrasiltecpar = async (req, res) => {
         videoData.push({
             segment: parseInt(videoSegIdx),
             type: "media",
+            start: videoSegmentTimelineList[i - 1].start,
+            stop: videoSegmentTimelineList[i - 1].stop,
             uri: videoUri[0]
         });
     }
@@ -119,6 +130,8 @@ const ParserBrasiltecpar = async (req, res) => {
         audioData.push({
             segment: parseInt(audioSegIdx),
             type: "media",
+            start: audioSegmentTimelineList[i - 1].start,
+            stop: audioSegmentTimelineList[i - 1].stop,
             uri: audioUri[0]
         });
     }
