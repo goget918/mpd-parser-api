@@ -32,129 +32,134 @@ const getSegmentTimelineListForDuration = (presentationStartTime, timeShiftBuffe
 }
 
 const ParserBrasiltecpar = async (req, res) => {
-    const payload = req.body;
-    const mpdUrl = payload.url;
-    const videoRepId = payload.video.representation_id;
-    const audioRepId = payload.audio.representation_id;
-    const requestHeader = payload.headers;
-    const numSegments = payload.numSegments;
-    const timeDuration = payload.bufferLength;
-    // const timeDuration = 3;
+    try {
+        const payload = req.body;
+        const mpdUrl = payload.url;
+        const videoRepId = payload.video.representation_id;
+        const audioRepId = payload.audio.representation_id;
+        const requestHeader = payload.headers;
+        const numSegments = payload.numSegments;
+        const timeDuration = payload.bufferLength;
+        // const timeDuration = 3;
 
-    const parsedUrl = new url.URL(mpdUrl);
-    const baseUrl = `${parsedUrl.protocol}//${parsedUrl.hostname}${parsedUrl.pathname}`
+        const parsedUrl = new url.URL(mpdUrl);
+        const baseUrl = `${parsedUrl.protocol}//${parsedUrl.hostname}${parsedUrl.pathname}`
 
-    const config = PlayerConfiguration.createDefault().manifest;
-    mpdParser = new DashMpdParser();
-    mpdParser.configure(config);
+        const config = PlayerConfiguration.createDefault().manifest;
+        mpdParser = new DashMpdParser();
+        mpdParser.configure(config);
 
-    logger.info(`Parsing mpd ${mpdUrl} with rep id ${videoRepId}, ${audioRepId}`);
-    await mpdParser.start(mpdUrl, baseUrl, requestHeader);
+        logger.info(`Parsing mpd ${mpdUrl} with rep id ${videoRepId}, ${audioRepId}`);
+        await mpdParser.start(mpdUrl, baseUrl, requestHeader);
 
-    const parsedResult = mpdParser.manifest_;
-    const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
-    const maxSegmentDuration = parsedResult.presentationTimeline.maxSegmentDuration_;
-    const timeShiftBufferDepth = parsedResult.presentationTimeline.segmentAvailabilityDuration_;
+        const parsedResult = mpdParser.manifest_;
+        const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
+        const maxSegmentDuration = parsedResult.presentationTimeline.maxSegmentDuration_;
+        const timeShiftBufferDepth = parsedResult.presentationTimeline.segmentAvailabilityDuration_;
 
-    if (!parsedResult) {
-        return res.json({});
-    }
-
-    let targetStream = null;
-
-    for (const variant of parsedResult.variants) {
-        if (variant.audio.originalId == audioRepId &&
-            variant.video.originalId == videoRepId) {
-            targetStream = variant;
-            break;
+        if (!parsedResult) {
+            return res.json({});
         }
-    }
 
-    if (!targetStream) {
-        return res.json({});
-    }
+        let targetStream = null;
 
-    const audio = targetStream.audio;
-    const video = targetStream.video;
+        for (const variant of parsedResult.variants) {
+            if (variant.audio.originalId == audioRepId &&
+                variant.video.originalId == videoRepId) {
+                targetStream = variant;
+                break;
+            }
+        }
 
-    await audio.createSegmentIndex();
-    await video.createSegmentIndex();
+        if (!targetStream) {
+            return res.json({});
+        }
 
-    const responseData = {};
-    const videoData = [];
-    // will be specified by input param
-    const segmentBufferLen = 10;
+        const audio = targetStream.audio;
+        const video = targetStream.video;
 
-    const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
-    const videoSegmentIndex = video.segmentIndex;
-    const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
+        await audio.createSegmentIndex();
+        await video.createSegmentIndex();
 
-    const videoTimelines = videoSegmentIndex.indexes_[0].templateInfo_.timeline;
-    
-    const videoSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, videoTimelines,  timeDuration);
-    const videoSegmentsNum = videoSegmentTimelineList.length;
+        const responseData = {};
+        const videoData = [];
+        // will be specified by input param
+        const segmentBufferLen = 10;
 
-    const audioData = [];
-    const audioInitSegmentIndex = audio.segmentIndex.indexes_[0].initSegmentReference_;
-    const audioSegmentIndex = audio.segmentIndex;
-    const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
-    const audioTimelines = audioSegmentIndex.indexes_[0].templateInfo_.timeline;
-    const audioSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, audioTimelines, timeDuration);
-    const audioSegmentsNum = audioSegmentTimelineList.length;
+        const videoInitSegmentIndex = video.segmentIndex.indexes_[0].initSegmentReference_;
+        const videoSegmentIndex = video.segmentIndex;
+        const videototalNum = videoSegmentIndex.indexes_[0].getNumReferences();
 
-    logger.info(`returning ${videoSegmentsNum} video segments and ${audioSegmentsNum} audio ones for latest ${timeDuration} seconds..`);
+        const videoTimelines = videoSegmentIndex.indexes_[0].templateInfo_.timeline;
+        
+        const videoSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, videoTimelines,  timeDuration);
+        const videoSegmentsNum = videoSegmentTimelineList.length;
 
-    // Get init segment information
-    videoData.push({
-        segment: 0,
-        type: "initialization",
-        uri: videoInitSegmentIndex.getUris()[0]
-    });
+        const audioData = [];
+        const audioInitSegmentIndex = audio.segmentIndex.indexes_[0].initSegmentReference_;
+        const audioSegmentIndex = audio.segmentIndex;
+        const audiototalNum = audioSegmentIndex.indexes_[0].getNumReferences();
+        const audioTimelines = audioSegmentIndex.indexes_[0].templateInfo_.timeline;
+        const audioSegmentTimelineList = getSegmentTimelineListForDuration(presentationStartTime, timeShiftBufferDepth, audioTimelines, timeDuration);
+        const audioSegmentsNum = audioSegmentTimelineList.length;
 
-    audioData.push({
-        segment: 0,
-        type: "initialization",
-        uri: audioInitSegmentIndex.getUris()[0]
-    });
+        logger.info(`returning ${videoSegmentsNum} video segments and ${audioSegmentsNum} audio ones for latest ${timeDuration} seconds..`);
 
-    for (let i = videoSegmentsNum; i > 0; i--) {
-        const videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
-        const videoSegmentRef = videoSegmentIndex.get(videototalNum - i);
-        const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
-        videoSegIdx = videoSegmentNum.replace(/\D/g, '');
-
+        // Get init segment information
         videoData.push({
-            segment: videoSegmentTimelineList[i - 1].start,
-            type: "media",
-            start: videoSegmentTimelineList[i - 1].start,
-            stop: videoSegmentTimelineList[i - 1].stop,
-            duration: videoSegmentTimelineList[i - 1].duration,
-            uri: videoUri[0]
+            segment: 0,
+            type: "initialization",
+            uri: videoInitSegmentIndex.getUris()[0]
         });
-    }
-
-    for (let i = audioSegmentsNum; i > 0; i--) {
-        const audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
-        const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
-        audioSegIdx = audioSegmentNum.replace(/\D/g, '');
 
         audioData.push({
-            segment: audioSegmentTimelineList[i - 1].start,
-            type: "media",
-            start: audioSegmentTimelineList[i - 1].start,
-            stop: audioSegmentTimelineList[i - 1].stop,
-            duration: audioSegmentTimelineList[i - 1].duration,
-            uri: audioUri[0]
+            segment: 0,
+            type: "initialization",
+            uri: audioInitSegmentIndex.getUris()[0]
         });
+
+        for (let i = videoSegmentsNum; i > 0; i--) {
+            const videoUri = videoSegmentIndex.get(videototalNum - i).getUrisInner();
+            const videoSegmentRef = videoSegmentIndex.get(videototalNum - i);
+            const videoSegmentNum = path.basename(videoUri[0], path.extname(videoUri[0]));
+            videoSegIdx = videoSegmentNum.replace(/\D/g, '');
+
+            videoData.push({
+                segment: videoSegmentTimelineList[i - 1].start,
+                type: "media",
+                start: videoSegmentTimelineList[i - 1].start,
+                stop: videoSegmentTimelineList[i - 1].stop,
+                duration: videoSegmentTimelineList[i - 1].duration,
+                uri: videoUri[0]
+            });
+        }
+
+        for (let i = audioSegmentsNum; i > 0; i--) {
+            const audioUri = audioSegmentIndex.get(audiototalNum - i).getUrisInner();
+            const audioSegmentNum = path.basename(audioUri[0], path.extname(audioUri[0]));
+            audioSegIdx = audioSegmentNum.replace(/\D/g, '');
+
+            audioData.push({
+                segment: audioSegmentTimelineList[i - 1].start,
+                type: "media",
+                start: audioSegmentTimelineList[i - 1].start,
+                stop: audioSegmentTimelineList[i - 1].stop,
+                duration: audioSegmentTimelineList[i - 1].duration,
+                uri: audioUri[0]
+            });
+        }
+
+        responseData.maxSegmentDuration = maxSegmentDuration;
+        responseData.segmentDuration = segmentDuration;
+        responseData.timeShiftBufferDepth = timeShiftBufferDepth;
+        responseData.video = videoData;
+        responseData.audio = audioData;
+
+        res.json(responseData);
+    } catch (err) {
+        console.log(err);
+        res.json({});
     }
-
-    responseData.maxSegmentDuration = maxSegmentDuration;
-    responseData.segmentDuration = segmentDuration;
-    responseData.timeShiftBufferDepth = timeShiftBufferDepth;
-    responseData.video = videoData;
-    responseData.audio = audioData;
-
-    res.json(responseData);
 };
 
 module.exports = ParserBrasiltecpar;
