@@ -2,6 +2,7 @@ const fs = require('fs');
 const axios = require('axios');
 const ManifestParserUtils = require('./util/manifest_parser_utils');
 const LanguageUtils = require('./util/language_utils');
+const PresentationTimeline = require('./media/presentation_timeline');
 const MimeUtils = require('./util/mime_utils');
 const SegmentBase = require('./dash/segment_base');
 const SegmentTemplate = require('./dash/segment_template');
@@ -218,6 +219,19 @@ class DashMpdParser {
                 manifestBaseUris, uris);
         }
 
+        let availabilityTimeOffset = 0;
+        if (uriObjs && uriObjs.length) {
+        availabilityTimeOffset = TXml.parseAttr(uriObjs[0],
+            'availabilityTimeOffset', TXml.parseFloat) || 0;
+        }
+
+        const ignoreMinBufferTime = this.config_.dash.ignoreMinBufferTime;
+        let minBufferTime = 0;
+        if (!ignoreMinBufferTime) {
+        minBufferTime =
+            TXml.parseAttr(mpd, 'minBufferTime', TXml.parseDuration) || 0;
+        }
+
         this.updatePeriod_ = /** @type {number} */ (TXml.parseAttr(
             mpd, 'minimumUpdatePeriod', TXml.parseDuration, -1));
         const presentationStartTime = TXml.parseAttr(
@@ -225,14 +239,70 @@ class DashMpdParser {
         let segmentAvailabilityDuration = TXml.parseAttr(
             mpd, 'timeShiftBufferDepth', TXml.parseDuration);
 
+        const ignoreSuggestedPresentationDelay =
+        this.config_.dash.ignoreSuggestedPresentationDelay;
+        let suggestedPresentationDelay = null;
+        if (!ignoreSuggestedPresentationDelay) {
+        suggestedPresentationDelay = TXml.parseAttr(
+            mpd, 'suggestedPresentationDelay', TXml.parseDuration);
+        }
+
+        const ignoreMaxSegmentDuration =
+            this.config_.dash.ignoreMaxSegmentDuration;
+        let maxSegmentDuration = null;
+        if (!ignoreMaxSegmentDuration) {
+            maxSegmentDuration = TXml.parseAttr(
+                mpd, 'maxSegmentDuration', TXml.parseDuration);
+        }
+
         const mpdType = mpd.attributes['type'] || 'static';
         const profiles = mpd.attributes['profiles'] || '';
+
+        let presentationTimeline;
+        if (!this.manifest_) {
+            // DASH IOP v3.0 suggests using a default delay between minBufferTime
+            // and timeShiftBufferDepth.  This is literally the range of all
+            // feasible choices for the value.  Nothing older than
+            // timeShiftBufferDepth is still available, and anything less than
+            // minBufferTime will cause buffering issues.
+            //
+            // We have decided that our default will be the configured value, or
+            // 1.5 * minBufferTime if not configured. This is fairly conservative.
+            // Content providers should provide a suggestedPresentationDelay whenever
+            // possible to optimize the live streaming experience.
+            const defaultPresentationDelay =
+            this.config_.defaultPresentationDelay || minBufferTime * 1.5;
+            const presentationDelay = suggestedPresentationDelay != null ?
+                suggestedPresentationDelay : defaultPresentationDelay;
+            presentationTimeline = new PresentationTimeline(
+                presentationStartTime, presentationDelay,
+                this.config_.dash.autoCorrectDrift);
+        }
+
+        presentationTimeline.setStatic(mpdType == 'static');
+
+        const isLive = presentationTimeline.isLive();
+
+        // If it's live, we check for an override.
+        if (isLive && !isNaN(this.config_.availabilityWindowOverride)) {
+        segmentAvailabilityDuration = this.config_.availabilityWindowOverride;
+        }
+
+        // If it's null, that means segments are always available.  This is always
+        // the case for VOD, and sometimes the case for live.
+        if (segmentAvailabilityDuration == null) {
+        segmentAvailabilityDuration = Infinity;
+        }
+
+        presentationTimeline.setSegmentAvailabilityDuration(
+            segmentAvailabilityDuration);
 
         /** @type {shaka.dash.DashParser.Context} */
         const context = {
             // Don't base on updatePeriod_ since emsg boxes can cause manifest
             // updates.
             dynamic: mpdType != 'static',
+            presentationTimeline: presentationTimeline,
             period: null,
             periodInfo: null,
             adaptationSet: null,
@@ -262,11 +332,15 @@ class DashMpdParser {
             presentationTimeline.setDuration(duration || Infinity);
         }
 
+        // Use @maxSegmentDuration to override smaller, derived values.
+        presentationTimeline.notifyMaxSegmentDuration(maxSegmentDuration || 1);
+
         await this.periodCombiner_.combinePeriods(periods, context.dynamic);
 
         // These steps are not done on manifest update.
         if (!this.manifest_) {
             this.manifest_ = {
+                presentationTimeline: presentationTimeline,
                 variants: this.periodCombiner_.getVariants(),
                 textStreams: this.periodCombiner_.getTextStreams(),
                 imageStreams: this.periodCombiner_.getImageStreams(),
@@ -277,23 +351,22 @@ class DashMpdParser {
                 serviceDescription: this.parseServiceDescription_(mpd),
             };
 
-            // // We only need to do clock sync when we're using presentation start
-            // // time. This condition also excludes VOD streams.
-            // if (presentationTimeline.usingPresentationStartTime()) {
-            //     const TXml = shaka.util.TXml;
-            //     const timingElements = TXml.findChildren(mpd, 'UTCTiming');
-            //     const offset = await this.parseUtcTiming_(getBaseUris, timingElements);
-            //     // Detect calls to stop().
-            //     if (!this.playerInterface_) {
-            //         return;
-            //     }
-            //     presentationTimeline.setClockOffset(offset);
-            // }
+            // We only need to do clock sync when we're using presentation start
+            // time. This condition also excludes VOD streams.
+            if (presentationTimeline.usingPresentationStartTime()) {
+                const timingElements = TXml.findChildren(mpd, 'UTCTiming');
+                const offset = await this.parseUtcTiming_(getBaseUris, timingElements);
+                // Detect calls to stop().
+                if (!this.playerInterface_) {
+                    return;
+                }
+                presentationTimeline.setClockOffset(offset);
+            }
 
             // This is the first point where we have a meaningful presentation start
             // time, and we need to tell PresentationTimeline that so that it can
             // maintain consistency from here on.
-            // presentationTimeline.lockStartTime();
+            presentationTimeline.lockStartTime();
         } else {
             // Just update the variants and text streams, which may change as periods
             // are added or removed.
@@ -1552,6 +1625,77 @@ class DashMpdParser {
 
         return null;
     }
+
+    /**
+   * Parses an array of UTCTiming elements.
+   *
+   * @param {function():!Array.<string>} getBaseUris
+   * @param {!Array.<!shaka.extern.xml.Node>} elems
+   * @return {!Promise.<number>}
+   * @private
+   */
+  async parseUtcTiming_(getBaseUris, elems) {
+    const schemesAndValues = elems.map((elem) => {
+      return {
+        scheme: elem.attributes['schemeIdUri'],
+        value: elem.attributes['value'],
+      };
+    });
+
+    // If there's nothing specified in the manifest, but we have a default from
+    // the config, use that.
+    const clockSyncUri = this.config_.dash.clockSyncUri;
+    if (!schemesAndValues.length && clockSyncUri) {
+      schemesAndValues.push({
+        scheme: 'urn:mpeg:dash:utc:http-head:2014',
+        value: clockSyncUri,
+      });
+    }
+
+    for (const sv of schemesAndValues) {
+      try {
+        const scheme = sv.scheme;
+        const value = sv.value;
+        switch (scheme) {
+          // See DASH IOP Guidelines Section 4.7
+          // https://bit.ly/DashIop3-2
+          // Some old ISO23009-1 drafts used 2012.
+          case 'urn:mpeg:dash:utc:http-head:2014':
+          case 'urn:mpeg:dash:utc:http-head:2012':
+            // eslint-disable-next-line no-await-in-loop
+            return await this.requestForTiming_(getBaseUris, value, 'HEAD');
+          case 'urn:mpeg:dash:utc:http-xsdate:2014':
+          case 'urn:mpeg:dash:utc:http-iso:2014':
+          case 'urn:mpeg:dash:utc:http-xsdate:2012':
+          case 'urn:mpeg:dash:utc:http-iso:2012':
+            // eslint-disable-next-line no-await-in-loop
+            return await this.requestForTiming_(getBaseUris, value, 'GET');
+          case 'urn:mpeg:dash:utc:direct:2014':
+          case 'urn:mpeg:dash:utc:direct:2012': {
+            const date = Date.parse(value);
+            return isNaN(date) ? 0 : (date - Date.now());
+          }
+
+          case 'urn:mpeg:dash:utc:http-ntp:2014':
+          case 'urn:mpeg:dash:utc:ntp:2014':
+          case 'urn:mpeg:dash:utc:sntp:2014':
+            logger.warn('NTP UTCTiming scheme is not supported');
+            break;
+          default:
+            logger.warn(
+                'Unrecognized scheme in UTCTiming element', scheme);
+            break;
+        }
+      } catch (e) {
+        logger.warn('Error fetching time from UTCTiming elem', e.message);
+      }
+    }
+
+    logger.warn(
+        'A UTCTiming element should always be given in live manifests! ' +
+        'This content may not play on clients with bad clocks!');
+    return 0;
+  }
 }
 
 module.exports = DashMpdParser;
