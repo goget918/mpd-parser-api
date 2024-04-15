@@ -76,6 +76,12 @@ const ParserBrasiltecpar = async (req, res) => {
         };
 
         const processSegmentData = (segmentIndex, segmentTimelineList, mediaData) => {
+            const uri = segmentIndex.get(0).initSegmentReference.getUris()[0];
+                mediaData.push({
+                    segment: 0,
+                    type: "initialization",
+                    uri
+                });
             for (let i = segmentTimelineList.length; i > 0; i--) {
                 const uri = segmentIndex.get(segmentIndex.indexes_[0].getNumReferences() - i).getUrisInner()[0];
                 const segmentNum = parseInt(path.basename(uri, path.extname(uri)).replace(/\D/g, ''));
