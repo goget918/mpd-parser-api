@@ -82,6 +82,7 @@ const ParserBrasiltecpar = async (req, res) => {
         const parsedResult = mpdParser.manifest_;
         const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
         const timeShiftBufferDepth = parsedResult.presentationTimeline.segmentAvailabilityDuration_;
+        const nSegments = Math.ceil(timeDuration/parsedResult.presentationTimeline.maxSegmentDuration_);
 
         if (!parsedResult) {
             return res.json({});
@@ -186,6 +187,13 @@ const ParserBrasiltecpar = async (req, res) => {
 
         logger.info(`returning ${responseData.video.length} video segments and ${responseData.audio.length} audio ones for latest ${timeDuration} seconds..`);
 
+        // combiine responseData.video.[0] and responseData.video.slice(-nSegments) into a single array responseData.video
+        if(!videoTemplateInfo?.timeline){
+            videoFiltered = [];
+            audioFiltered = [];
+            responseData.video = videoFiltered.concat(responseData.video[0], responseData.video.slice(-nSegments));
+            responseData.audio = audioFiltered.concat(responseData.audio[0], responseData.audio.slice(-nSegments));
+        }
         res.json(responseData);
     } catch (err) {
         console.error(err);
