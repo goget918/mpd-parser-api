@@ -98,7 +98,7 @@ class SegmentList {
       const start = context.presentationTimeline.getSegmentAvailabilityStart();
       segmentIndex.mergeAndEvict(references, start);
     } else {
-      segmentIndex = new shaka.media.SegmentIndex(references);
+      segmentIndex = SegmentIndex(references);
     }
     context.presentationTimeline.notifySegments(references);
 
@@ -270,7 +270,7 @@ class SegmentList {
         return uris;
       };
       references.push(
-        new shaka.media.SegmentReference(
+        new SegmentReference(
           periodStart + startTime,
           periodStart + endTime,
           getUris,

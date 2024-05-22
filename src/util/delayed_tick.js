@@ -28,7 +28,7 @@ class DelayedTick {
     let timeoutId = null;
 
     this.cancelPending_ = () => {
-      window.clearTimeout(timeoutId);
+      // window.clearTimeout(timeoutId);
       alive = false;
     };
 
