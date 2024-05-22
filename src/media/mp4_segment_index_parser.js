@@ -137,7 +137,7 @@ class Mp4SegmentIndexParser {
           (unscaledStartTime + subsegmentDuration) / timescale;
 
       references.push(
-          new shaka.media.SegmentReference(
+          new SegmentReference(
               nativeStartTime + timestampOffset,
               nativeEndTime + timestampOffset,
               (() => { return uris; }),

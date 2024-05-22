@@ -212,26 +212,23 @@ class SegmentTemplate {
    * @private
    */
   static parseSegmentTemplateInfo_(context) {
-    const segmentInfo =
-      MpdUtils.parseSegmentInfo(context, SegmentTemplate.fromInheritance_);
-
-    const media = MpdUtils.inheritAttribute(
-      context, SegmentTemplate.fromInheritance_, 'media');
-    const index = MpdUtils.inheritAttribute(
-      context, SegmentTemplate.fromInheritance_, 'index');
-
+    const segmentInfo = MpdUtils.parseSegmentInfo(context, SegmentTemplate.fromInheritance_);
+  
+    const media = MpdUtils.inheritAttribute(context, SegmentTemplate.fromInheritance_, 'media');
+    const index = MpdUtils.inheritAttribute(context, SegmentTemplate.fromInheritance_, 'index');
+  
     return {
       segmentDuration: segmentInfo.segmentDuration,
       timescale: segmentInfo.timescale,
       startNumber: segmentInfo.startNumber,
       scaledPresentationTimeOffset: segmentInfo.scaledPresentationTimeOffset,
-      unscaledPresentationTimeOffset:
-        segmentInfo.unscaledPresentationTimeOffset,
-      timeline: segmentInfo.timeline,
+      unscaledPresentationTimeOffset: segmentInfo.unscaledPresentationTimeOffset,
+      timeline: segmentInfo.timeline || null,
       mediaTemplate: media && StringUtils.htmlUnescape(media),
       indexTemplate: index,
     };
   }
+  
 
   /**
    * Verifies a SegmentTemplate info object.
@@ -317,64 +314,48 @@ class SegmentTemplate {
    * @private
    */
   static generateSegmentIndexFromDuration_(
-    context, info, segmentLimit, initSegmentReference, periodDurationMap,
-    aesKey) {
-    assert(info.mediaTemplate,
-      'There should be a media template with duration');
+    context, info, segmentLimit, initSegmentReference, periodDurationMap, aesKey) {
+    assert(info.mediaTemplate, 'There should be a media template with duration');
     const presentationTimeline = context.presentationTimeline;
-
-    // Capture values that could change as the parsing context moves on to
-    // other parts of the manifest.
+  
     const periodStart = context.periodInfo.start;
     const periodId = context.period.id;
     const initialPeriodDuration = context.periodInfo.duration;
-
-    // For multi-period live streams the period duration may not be known until
-    // the following period appears in an updated manifest. periodDurationMap
-    // provides the updated period duration.
+  
     const getPeriodEnd = () => {
       const periodDuration =
-        (periodId != null && periodDurationMap[periodId]) ||
-        initialPeriodDuration;
+        (periodId != null && periodDurationMap[periodId]) || initialPeriodDuration;
       const periodEnd = periodDuration ?
         (periodStart + periodDuration) : Infinity;
       return periodEnd;
     };
-
+  
     const segmentDuration = info.segmentDuration;
-    assert(
-      segmentDuration != null, 'Segment duration must not be null!');
-
+    assert(segmentDuration != null, 'Segment duration must not be null!');
+  
     const startNumber = info.startNumber;
     const timescale = info.timescale;
-
+  
     const template = info.mediaTemplate;
     const bandwidth = context.bandwidth || null;
     const id = context.representation.id;
     const getBaseUris = context.representation.getBaseUris;
-
+  
     const timestampOffset = periodStart - info.scaledPresentationTimeOffset;
-
-    // Computes the range of presentation timestamps both within the period and
-    // available.  This is an intersection of the period range and the
-    // availability window.
+  
     const computeAvailablePeriodRange = () => {
       return [
         Math.max(
           presentationTimeline.getSegmentAvailabilityStart(),
           periodStart),
-
+  
         Math.min(
           presentationTimeline.getSegmentAvailabilityEnd(),
           getPeriodEnd()),
       ];
     };
-
-    // Computes the range of absolute positions both within the period and
-    // available.  The range is inclusive.  These are the positions for which we
-    // will generate segment references.
+  
     const computeAvailablePositionRange = () => {
-      // In presentation timestamps.
       const availablePresentationTimes = computeAvailablePeriodRange();
       assert(availablePresentationTimes.every(isFinite),
         'Available presentation times must be finite!');
@@ -382,128 +363,87 @@ class SegmentTemplate {
         'Available presentation times must be positive!');
       assert(segmentDuration != null,
         'Segment duration must not be null!');
-
-      // In period-relative timestamps.
+  
       const availablePeriodTimes =
         availablePresentationTimes.map((x) => x - periodStart);
-      // These may sometimes be reversed ([1] <= [0]) if the period is
-      // completely unavailable.  The logic will still work if this happens,
-      // because we will simply generate no references.
-
-      // In period-relative positions (0-based).
       const availablePeriodPositions = [
         Math.ceil(availablePeriodTimes[0] / segmentDuration),
         Math.ceil(availablePeriodTimes[1] / segmentDuration) - 1,
       ];
-
-      // In absolute positions.
+  
       const availablePresentationPositions =
         availablePeriodPositions.map((x) => x + startNumber);
       return availablePresentationPositions;
     };
-
-    // For Live, we must limit the initial SegmentIndex in size, to avoid
-    // consuming too much CPU or memory for content with gigantic
-    // timeShiftBufferDepth (which can have values up to and including
-    // Infinity).
+  
     const range = computeAvailablePositionRange();
     const minPosition = context.dynamic ?
       Math.max(range[0], range[1] - segmentLimit + 1) :
       range[0];
     const maxPosition = range[1];
-
+  
     const references = [];
     const createReference = (position) => {
-      // These inner variables are all scoped to the inner loop, and can be used
-      // safely in the callback below.
-
-      assert(segmentDuration != null,
-        'Segment duration must not be null!');
-
-      // Relative to the period start.
+      assert(segmentDuration != null, 'Segment duration must not be null!');
       const positionWithinPeriod = position - startNumber;
       const segmentPeriodTime = positionWithinPeriod * segmentDuration;
-
-      // What will appear in the actual segment files.  The media timestamp is
-      // what is expected in the $Time$ template.
-      const segmentMediaTime = segmentPeriodTime +
-        info.scaledPresentationTimeOffset;
-
+      const segmentMediaTime = segmentPeriodTime + info.scaledPresentationTimeOffset;
+  
       const getUris = () => {
         let time = segmentMediaTime * timescale;
-        if ('BigInt' in window && time > Number.MAX_SAFE_INTEGER) {
+        if (time > Number.MAX_SAFE_INTEGER) {
           time = BigInt(segmentMediaTime) * BigInt(timescale);
         }
         const mediaUri = MpdUtils.fillUriTemplate(
           template, id, position, /* subNumber= */ null, bandwidth, time);
         return ManifestParserUtils.resolveUris(getBaseUris(), [mediaUri]);
       };
-
-      // Relative to the presentation.
+  
       const segmentStart = segmentPeriodTime + periodStart;
       const trueSegmentEnd = segmentStart + segmentDuration;
-      // Cap the segment end at the period end so that references from the
-      // next period will fit neatly after it.
       const segmentEnd = Math.min(trueSegmentEnd, getPeriodEnd());
-
-      // This condition will be true unless the segmentStart was >= periodEnd.
-      // If we've done the position calculations correctly, this won't happen.
+  
       assert(segmentStart < segmentEnd,
         'Generated a segment outside of the period!');
-
-      const ref = new shaka.media.SegmentReference(
+  
+      const ref = new SegmentReference(
         segmentStart,
         segmentEnd,
         getUris,
-          /* startByte= */ 0,
-          /* endByte= */ null,
+        /* startByte= */ 0,
+        /* endByte= */ null,
         initSegmentReference,
         timestampOffset,
-          /* appendWindowStart= */ periodStart,
-          /* appendWindowEnd= */ getPeriodEnd(),
-          /* partialReferences= */[],
-          /* tilesLayout= */ '',
-          /* tileDuration= */ null,
-          /* syncTime= */ null,
-        shaka.media.SegmentReference.Status.AVAILABLE,
+        /* appendWindowStart= */ periodStart,
+        /* appendWindowEnd= */ getPeriodEnd(),
+        /* partialReferences= */[],
+        /* tilesLayout= */ '',
+        /* tileDuration= */ null,
+        /* syncTime= */ null,
+        SegmentReference.Status.AVAILABLE,
         aesKey);
-      // This is necessary information for thumbnail streams:
       ref.trueEndTime = trueSegmentEnd;
       return ref;
     };
-
+  
     for (let position = minPosition; position <= maxPosition; ++position) {
       const reference = createReference(position);
       references.push(reference);
     }
-
-    /** @type {shaka.media.SegmentIndex} */
-    const segmentIndex = new shaka.media.SegmentIndex(references);
-
-    // If the availability timeline currently ends before the period, we will
-    // need to add references over time.
+  
+    const segmentIndex = new SegmentIndex(references);
+  
     const willNeedToAddReferences =
       presentationTimeline.getSegmentAvailabilityEnd() < getPeriodEnd();
-
-    // When we start a live stream with a period that ends within the
-    // availability window we will not need to add more references, but we will
-    // need to evict old references.
     const willNeedToEvictReferences = presentationTimeline.isLive();
-
+  
     if (willNeedToAddReferences || willNeedToEvictReferences) {
-      // The period continues to get longer over time, so check for new
-      // references once every |segmentDuration| seconds.
-      // We clamp to |minPosition| in case the initial range was reversed and no
-      // references were generated.  Otherwise, the update would start creating
-      // negative positions for segments in periods which begin in the future.
       let nextPosition = Math.max(minPosition, maxPosition + 1);
       segmentIndex.updateEvery(segmentDuration, () => {
-        // Evict any references outside the window.
         const availabilityStartTime =
           presentationTimeline.getSegmentAvailabilityStart();
         segmentIndex.evict(availabilityStartTime);
-
-        // Compute any new references that need to be added.
+  
         const [_, maxPosition] = computeAvailablePositionRange();
         const references = [];
         while (nextPosition <= maxPosition) {
@@ -511,19 +451,17 @@ class SegmentTemplate {
           references.push(reference);
           nextPosition++;
         }
-
-        // The timer must continue firing until the entire period is
-        // unavailable, so that all references will be evicted.
+  
         if (availabilityStartTime > getPeriodEnd() && !references.length) {
-          // Signal stop.
           return null;
         }
         return references;
       });
     }
-
+  
     return Promise.resolve(segmentIndex);
   }
+  
 
   /**
    * Creates an init segment reference from a context object.
