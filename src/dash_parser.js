@@ -1,5 +1,6 @@
 const fs = require('fs');
 const axios = require('axios');
+const { SocksProxyAgent } = require('socks-proxy-agent');  // Correct way to import
 const ManifestParserUtils = require('./util/manifest_parser_utils');
 const LanguageUtils = require('./util/language_utils');
 const PresentationTimeline = require('./media/presentation_timeline');
@@ -88,12 +89,12 @@ class DashMpdParser {
         }
     }
 
-    async start(uri, baseUrl, requestHeader) {
+    async start(uri, baseUrl, requestHeader, proxy) {
         // this.lowLatencyMode_ = playerInterface.isLowLatencyMode();
         this.manifestUri_ = uri;
         this.contentSteeringManager_ = new ContentSteeringManager();
 
-        await this.requestManifest_(baseUrl, requestHeader);
+        await this.requestManifest_(baseUrl, requestHeader, proxy);
 
         return this.manifest_;
     }
@@ -130,17 +131,59 @@ class DashMpdParser {
         return this.operationManager_.destroy();
     }
 
-    async requestManifest_(baseUrl, requestHeader) {
+    async requestManifest_(baseUrl, requestHeader, proxy) {
         try {
-            const response = await axios.get(this.manifestUri_, {requestHeader});
+            // Define the request options
+            let requestOptions = {
+                headers: requestHeader
+            };
+    
+            // If proxy is set, add the proxy configuration to the request options
+            if (proxy) {
+                const [protocol, rest] = proxy.split('://');
+                if (protocol.startsWith('socks')) {
+                    // For SOCKS proxy
+                    requestOptions.httpAgent = new SocksProxyAgent(proxy);
+                    requestOptions.httpsAgent = new SocksProxyAgent(proxy);
+                } else {
+                    // For HTTP/HTTPS proxy
+                    //Check if there is auth
+                    if (rest.includes('@')) {
+                    const [auth, address] = rest.split('@');
+                    const [user, password] = auth.split(':');
+                    const [host, port] = address.split(':');
+                    requestOptions.proxy = {
+                        protocol: protocol,
+                        host: host,
+                        port: parseInt(port),
+                        auth: {
+                            username: user,
+                            password: password
+                        }
+                    };
+                    } else {
+                    const [host, port] = rest.split(':');
+                    requestOptions.proxy = {
+                        protocol: protocol,
+                        host: host,
+                        port: parseInt(port)
+                    };
+                    }
+    
+                    
+                }
+            }
+    
+            const response = await axios.get(this.manifestUri_, requestOptions);
             const mpdBuffer = Buffer.from(response.data);
-
+    
             await this.parseManifest_(mpdBuffer, baseUrl);
-
+    
         } catch (err) {
             console.error('Error fetching data:', err);
         }
     }
+    
 
     async parseManifest_(data, finalManifestUri) {
         const mpd = TXml.parseXml(data, 'MPD');
