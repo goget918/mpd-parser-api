@@ -597,25 +597,25 @@ class DashMpdParser {
         const normalAdaptationSets = adaptationSets
             .filter((as) => { return !as.trickModeFor; });
 
-        const trickModeAdaptationSets = adaptationSets
-            .filter((as) => { return as.trickModeFor; });
+        // const trickModeAdaptationSets = adaptationSets
+        //     .filter((as) => { return as.trickModeFor; });
 
         // Attach trick mode tracks to normal tracks.
-        for (const trickModeSet of trickModeAdaptationSets) {
-            const targetIds = trickModeSet.trickModeFor.split(' ');
-            for (const normalSet of normalAdaptationSets) {
-                if (targetIds.includes(normalSet.id)) {
-                    for (const stream of normalSet.streams) {
-                        // There may be multiple trick mode streams, but we do not
-                        // currently support that.  Just choose one.
-                        // TODO: https://github.com/shaka-project/shaka-player/issues/1528
-                        stream.trickModeVideo = trickModeSet.streams.find((trickStream) =>
-                            shaka.util.MimeUtils.getNormalizedCodec(stream.codecs) ==
-                            shaka.util.MimeUtils.getNormalizedCodec(trickStream.codecs));
-                    }
-                }
-            }
-        }
+        // for (const trickModeSet of trickModeAdaptationSets) {
+        //     const targetIds = trickModeSet.trickModeFor.split(' ');
+        //     for (const normalSet of normalAdaptationSets) {
+        //         if (targetIds.includes(normalSet.id)) {
+        //             for (const stream of normalSet.streams) {
+        //                 // There may be multiple trick mode streams, but we do not
+        //                 // currently support that.  Just choose one.
+        //                 // TODO: https://github.com/shaka-project/shaka-player/issues/1528
+        //                 stream.trickModeVideo = trickModeSet.streams.find((trickStream) =>
+        //                     shaka.util.MimeUtils.getNormalizedCodec(stream.codecs) ==
+        //                     shaka.util.MimeUtils.getNormalizedCodec(trickStream.codecs));
+        //             }
+        //         }
+        //     }
+        // }
 
         const audioStreams = this.getStreamsFromSets_(
             this.config_.disableAudio,

@@ -235,7 +235,7 @@ class WebmSegmentIndexParser {
         assert(lastOffset != null, 'last offset cannot be null');
 
         references.push(
-          new shaka.media.SegmentReference(
+          new SegmentReference(
             lastTime + timestampOffset,
             currentTime + timestampOffset,
             getUris,
