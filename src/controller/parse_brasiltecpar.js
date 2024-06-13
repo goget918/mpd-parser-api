@@ -66,7 +66,8 @@ const ParserBrasiltecpar = async (req, res) => {
             audio: { representation_id: audioRepId },
             headers: requestHeader,
             numSegments,
-            bufferLength: timeDuration
+            bufferLength: timeDuration,
+            proxy: proxy
         } = req.body;
 
         const parsedUrl = new url.URL(mpdUrl);
@@ -77,7 +78,7 @@ const ParserBrasiltecpar = async (req, res) => {
         mpdParser.configure(config);
 
         logger.info(`Parsing mpd ${mpdUrl} with rep id ${videoRepId}, ${audioRepId}`);
-        await mpdParser.start(mpdUrl, baseUrl, requestHeader);
+        await mpdParser.start(mpdUrl, baseUrl, requestHeader, proxy);
 
         const parsedResult = mpdParser.manifest_;
         const presentationStartTime = parsedResult.presentationTimeline.getPresentationStartTime();
