@@ -1,4 +1,5 @@
 const url = require('url');
+const functional = require('./functional');
 
 class ManifestParserUtils {
     /**
@@ -102,22 +103,23 @@ class ManifestParserUtils {
      * @return {Array.<string>}
      */
     static resolveUris(baseUris, relativeUris) {
-        if (relativeUris.length === 0) {
+        if (relativeUris.length == 0) {
             return baseUris;
         }
 
-        if (baseUris.length === 1 && relativeUris.length === 1) {
-            return [new url.URL(relativeUris[0], baseUris[0]).toString()];
+        if (baseUris.length == 0) {
+            return relativeUris
+                .reduce(functional.collapseArrays, [])
+                .map((uri) => uri.toString());
         }
-
-        const resolvedUris = [];
-        baseUris.forEach((baseUri) => {
-            relativeUris.forEach((relativeUri) => {
-                resolvedUris.push(new url.URL(relativeUri, baseUri).toString());
-            });
-        });
-
-        return resolvedUris;
+        else {
+            // Resolve each URI relative to each base URI, creating an Array of Arrays.
+            // Then flatten the Arrays into a single Array.
+            return baseUris
+                .map((base) => relativeUris.map((i) => url.resolve(base, i)))
+                .reduce(functional.collapseArrays, [])
+                .map((uri) => uri.toString());
+        }
     }
 }
 

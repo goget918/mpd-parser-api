@@ -1,15 +1,16 @@
 const fs = require('fs');
 const axios = require('axios');
-const { SocksProxyAgent } = require('socks-proxy-agent');  // Correct way to import
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const ManifestParserUtils = require('./util/manifest_parser_utils');
 const LanguageUtils = require('./util/language_utils');
 const PresentationTimeline = require('./media/presentation_timeline');
 const MimeUtils = require('./util/mime_utils');
 const SegmentBase = require('./dash/segment_base');
 const SegmentTemplate = require('./dash/segment_template');
-const TXml = require('./util/txml');
+const SegmentList = require('./dash/segment_list');
 const TextEngine = require('./text/text_engine');
 const Functional = require('./util/functional');
+const xml_utils = require('./util/xml_utils');
 const path = require('path');
 const assert = require('assert');
 
@@ -75,10 +76,6 @@ class DashMpdParser {
     configure(config) {
         this.config_ = config;
 
-        if (this.contentSteeringManager_) {
-            this.contentSteeringManager_.configure(this.config_);
-        }
-
         if (this.periodCombiner_) {
             this.periodCombiner_.setAllowMultiTypeVariants(
                 this.config_.dash.multiTypeVariantsAllowed
@@ -92,7 +89,6 @@ class DashMpdParser {
     async start(uri, baseUrl, requestHeader, proxy) {
         // this.lowLatencyMode_ = playerInterface.isLowLatencyMode();
         this.manifestUri_ = uri;
-        this.contentSteeringManager_ = new ContentSteeringManager();
 
         await this.requestManifest_(baseUrl, requestHeader, proxy);
 
@@ -137,7 +133,7 @@ class DashMpdParser {
             let requestOptions = {
                 headers: requestHeader
             };
-    
+
             // If proxy is set, add the proxy configuration to the request options
             if (proxy) {
                 const [protocol, rest] = proxy.split('://');
@@ -149,50 +145,50 @@ class DashMpdParser {
                     // For HTTP/HTTPS proxy
                     //Check if there is auth
                     if (rest.includes('@')) {
-                    const [auth, address] = rest.split('@');
-                    const [user, password] = auth.split(':');
-                    const [host, port] = address.split(':');
-                    requestOptions.proxy = {
-                        protocol: protocol,
-                        host: host,
-                        port: parseInt(port),
-                        auth: {
-                            username: user,
-                            password: password
-                        }
-                    };
+                        const [auth, address] = rest.split('@');
+                        const [user, password] = auth.split(':');
+                        const [host, port] = address.split(':');
+                        requestOptions.proxy = {
+                            protocol: protocol,
+                            host: host,
+                            port: parseInt(port),
+                            auth: {
+                                username: user,
+                                password: password
+                            }
+                        };
                     } else {
-                    const [host, port] = rest.split(':');
-                    requestOptions.proxy = {
-                        protocol: protocol,
-                        host: host,
-                        port: parseInt(port)
-                    };
+                        const [host, port] = rest.split(':');
+                        requestOptions.proxy = {
+                            protocol: protocol,
+                            host: host,
+                            port: parseInt(port)
+                        };
                     }
-    
-                    
+
+
                 }
             }
-    
+
             const response = await axios.get(this.manifestUri_, requestOptions);
             const mpdBuffer = Buffer.from(response.data);
-    
+
             await this.parseManifest_(mpdBuffer, baseUrl);
-    
+
         } catch (err) {
             console.error('Error fetching data:', err);
         }
     }
-    
 
-    async parseManifest_(data, finalManifestUri) {
-        const mpd = TXml.parseXml(data, 'MPD');
+
+    async parseManifest_(data, baseURLFromMpdLink) {
+        const mpd = xml_utils.parseXml(data, 'MPD');
 
         if (!mpd) {
             throw new Error("Invalid XML formated manifest");
         }
 
-        return this.processManifest_(mpd, finalManifestUri);
+        return this.processManifest_(mpd, baseURLFromMpdLink);
     }
 
 
@@ -200,20 +196,19 @@ class DashMpdParser {
    * Takes a formatted MPD and converts it into a manifest.
    *
    * @param {!shaka.extern.xml.Node} mpd
-   * @param {string} finalManifestUri The final manifest URI, which may
-   *   differ from this.manifestUri_ if there has been a redirect.
+   * @param {string} baseURLFromMpdLink
    * @return {!Promise}
    * @private
    */
-    async processManifest_(mpd, finalManifestUri) {
-        let manifestBaseUris = [finalManifestUri];
+    async processManifest_(mpd, baseURLFromMpdLink) {
+        let manifestBaseUris = [];
         const locations = [];
         const locationsMapping = new Map();
-        const locationsObjs = TXml.findChildren(mpd, 'Location');
+        const locationsObjs = xml_utils.findChildren(mpd, 'Location');
 
         for (const locationsObj of locationsObjs) {
             const serviceLocation = locationsObj.attributes['serviceLocation'];
-            const uri = TXml.getContents(locationsObj);
+            const uri = xml_utils.getContents(locationsObj);
             if (!uri) {
                 continue;
             }
@@ -230,76 +225,96 @@ class DashMpdParser {
             locations.push(finalUri);
         }
 
-        if (this.contentSteeringManager_) {
-            const steeringlocations = this.contentSteeringManager_.getLocations(
-                'Location', /* ignoreBaseUrls= */ true);
-            if (steeringlocations.length > 0) {
-                this.manifestUris_ = steeringlocations;
-                manifestBaseUris = steeringlocations;
+        manifestBaseUris = locations;
+
+        let contentSteeringPromise = Promise.resolve();
+        const contentSteering = xml_utils.findChild(mpd, 'ContentSteering');
+
+        if (contentSteering) {
+            const defaultPathwayId =
+                contentSteering.attributes['defaultServiceLocation'];
+            if (!this.contentSteeringManager_) {
+                this.contentSteeringManager_ = new ContentSteeringManager();
+                this.contentSteeringManager_.configure(this.config_);
+                this.contentSteeringManager_.setManifestType('DASH');
+                this.contentSteeringManager_.setBaseUris(manifestBaseUris);
+                this.contentSteeringManager_.setDefaultPathwayId(defaultPathwayId);
+                const uri = xml_utils.getContents(contentSteering);
+                if (uri) {
+                    const queryBeforeStart =
+                        xml_utils.parseAttr(contentSteering, 'queryBeforeStart',
+                            xml_utils.parseBoolean, /* defaultValue= */ false);
+                    if (queryBeforeStart) {
+                        contentSteeringPromise =
+                            this.contentSteeringManager_.requestInfo(uri);
+                    } else {
+                        this.contentSteeringManager_.requestInfo(uri);
+                    }
+                }
+            } else {
+                this.contentSteeringManager_.setBaseUris(manifestBaseUris);
+                this.contentSteeringManager_.setDefaultPathwayId(defaultPathwayId);
             }
-        } else if (locations.length) {
-            this.manifestUris_ = locations;
-            manifestBaseUris = locations;
+            for (const serviceLocation of locationsMapping.keys()) {
+                const uri = locationsMapping.get(serviceLocation);
+                this.contentSteeringManager_.addLocation(
+                    'Location', serviceLocation, uri);
+            }
         }
 
-        const uriObjs = TXml.findChildren(mpd, 'BaseURL');
+        const uriObjs = xml_utils.findChildren(mpd, 'BaseURL');
         let calculatedBaseUris;
         let someLocationValid = false;
-
-        for (const uriObj of uriObjs) {
-            const serviceLocation = uriObj.attributes['serviceLocation'];
-            const uri = TXml.getContents(uriObj);
-            if (serviceLocation && uri) {
-                this.contentSteeringManager_.addLocation(
-                    'BaseURL', serviceLocation, uri);
-                someLocationValid = true;
+        if (this.contentSteeringManager_) {
+            for (const uriObj of uriObjs) {
+                const serviceLocation = uriObj.attributes['serviceLocation'];
+                const uri = xml_utils.getContents(uriObj);
+                if (serviceLocation && uri) {
+                    this.contentSteeringManager_.addLocation(
+                        'BaseURL', serviceLocation, uri);
+                    someLocationValid = true;
+                }
             }
         }
-
-        if (!someLocationValid) {
-            const uris = uriObjs.map(TXml.getContents);
+        if (!someLocationValid || !this.contentSteeringManager_) {
+            const uris = uriObjs.map(xml_utils.getContents);
             calculatedBaseUris = ManifestParserUtils.resolveUris(
-                manifestBaseUris, uris);
+                [baseURLFromMpdLink], uris);
         }
+
+        const getBaseUris = () => {
+            if (this.contentSteeringManager_) {
+                return this.contentSteeringManager_.getLocations('BaseURL');
+            }
+            if (calculatedBaseUris) {
+                return calculatedBaseUris;
+            }
+            return [];
+        };
 
         let availabilityTimeOffset = 0;
         if (uriObjs && uriObjs.length) {
-        availabilityTimeOffset = TXml.parseAttr(uriObjs[0],
-            'availabilityTimeOffset', TXml.parseFloat) || 0;
+            availabilityTimeOffset = xml_utils.parseAttr(
+                uriObjs[0], 'availabilityTimeOffset', xml_utils.parseFloat) || 0;
         }
+        let minBufferTime =
+            xml_utils.parseAttr(mpd, 'minBufferTime', xml_utils.parseDuration) || 0;
 
-        const ignoreMinBufferTime = this.config_.dash.ignoreMinBufferTime;
-        let minBufferTime = 0;
-        if (!ignoreMinBufferTime) {
-        minBufferTime =
-            TXml.parseAttr(mpd, 'minBufferTime', TXml.parseDuration) || 0;
-        }
+        this.updatePeriod_ = xml_utils.parseAttr(mpd, 'minimumUpdatePeriod',
+            xml_utils.parseDuration, -1);
 
-        this.updatePeriod_ = /** @type {number} */ (TXml.parseAttr(
-            mpd, 'minimumUpdatePeriod', TXml.parseDuration, -1));
-        const presentationStartTime = TXml.parseAttr(
-            mpd, 'availabilityStartTime', TXml.parseDate);
-        let segmentAvailabilityDuration = TXml.parseAttr(
-            mpd, 'timeShiftBufferDepth', TXml.parseDuration);
+        const presentationStartTime = xml_utils.parseAttr(mpd, 'availabilityStartTime',
+            xml_utils.parseDate);
+        let segmentAvailabilityDuration = xml_utils.parseAttr(mpd, 'timeShiftBufferDepth',
+            xml_utils.parseDuration);
 
-        const ignoreSuggestedPresentationDelay =
-        this.config_.dash.ignoreSuggestedPresentationDelay;
-        let suggestedPresentationDelay = null;
-        if (!ignoreSuggestedPresentationDelay) {
-        suggestedPresentationDelay = TXml.parseAttr(
-            mpd, 'suggestedPresentationDelay', TXml.parseDuration);
-        }
+        let suggestedPresentationDelay = xml_utils.parseAttr(
+            mpd, 'suggestedPresentationDelay', xml_utils.parseDuration);
 
-        const ignoreMaxSegmentDuration =
-            this.config_.dash.ignoreMaxSegmentDuration;
-        let maxSegmentDuration = null;
-        if (!ignoreMaxSegmentDuration) {
-            maxSegmentDuration = TXml.parseAttr(
-                mpd, 'maxSegmentDuration', TXml.parseDuration);
-        }
+        let maxSegmentDuration = xml_utils.parseAttr(
+            mpd, 'maxSegmentDuration', xml_utils.parseDuration);
 
         const mpdType = mpd.attributes['type'] || 'static';
-        const profiles = mpd.attributes['profiles'] || '';
 
         let presentationTimeline;
         if (!this.manifest_) {
@@ -314,7 +329,7 @@ class DashMpdParser {
             // Content providers should provide a suggestedPresentationDelay whenever
             // possible to optimize the live streaming experience.
             const defaultPresentationDelay =
-            this.config_.defaultPresentationDelay || minBufferTime * 1.5;
+                this.config_.defaultPresentationDelay || minBufferTime * 1.5;
             const presentationDelay = suggestedPresentationDelay != null ?
                 suggestedPresentationDelay : defaultPresentationDelay;
             presentationTimeline = new PresentationTimeline(
@@ -328,17 +343,19 @@ class DashMpdParser {
 
         // If it's live, we check for an override.
         if (isLive && !isNaN(this.config_.availabilityWindowOverride)) {
-        segmentAvailabilityDuration = this.config_.availabilityWindowOverride;
+            segmentAvailabilityDuration = this.config_.availabilityWindowOverride;
         }
 
         // If it's null, that means segments are always available.  This is always
         // the case for VOD, and sometimes the case for live.
         if (segmentAvailabilityDuration == null) {
-        segmentAvailabilityDuration = Infinity;
+            segmentAvailabilityDuration = Infinity;
         }
 
         presentationTimeline.setSegmentAvailabilityDuration(
             segmentAvailabilityDuration);
+
+        const profiles = mpd.attributes['profiles'] || '';
 
         /** @type {shaka.dash.DashParser.Context} */
         const context = {
@@ -352,17 +369,8 @@ class DashMpdParser {
             representation: null,
             bandwidth: 0,
             indexRangeWarningGiven: false,
+            availabilityTimeOffset: availabilityTimeOffset,
             profiles: profiles.split(','),
-        };
-
-        const getBaseUris = () => {
-            if (this.contentSteeringManager_ && someLocationValid) {
-                return this.contentSteeringManager_.getLocations('BaseURL');
-            }
-            if (calculatedBaseUris) {
-                return calculatedBaseUris;
-            }
-            return [];
         };
 
         const periodsAndDuration = this.parsePeriods_(context, getBaseUris, mpd);
@@ -379,6 +387,7 @@ class DashMpdParser {
         presentationTimeline.notifyMaxSegmentDuration(maxSegmentDuration || 1);
 
         await this.periodCombiner_.combinePeriods(periods, context.dynamic);
+        await contentSteeringPromise;
 
         // These steps are not done on manifest update.
         if (!this.manifest_) {
@@ -397,7 +406,7 @@ class DashMpdParser {
             // We only need to do clock sync when we're using presentation start
             // time. This condition also excludes VOD streams.
             if (presentationTimeline.usingPresentationStartTime()) {
-                const timingElements = TXml.findChildren(mpd, 'UTCTiming');
+                const timingElements = xml_utils.findChildren(mpd, 'UTCTiming');
                 const offset = await this.parseUtcTiming_(getBaseUris, timingElements);
                 // Detect calls to stop().
                 if (!this.playerInterface_) {
@@ -410,20 +419,6 @@ class DashMpdParser {
             // time, and we need to tell PresentationTimeline that so that it can
             // maintain consistency from here on.
             presentationTimeline.lockStartTime();
-        } else {
-            // Just update the variants and text streams, which may change as periods
-            // are added or removed.
-            this.manifest_.variants = this.periodCombiner_.getVariants();
-            const textStreams = this.periodCombiner_.getTextStreams();
-            if (textStreams.length > 0) {
-                this.manifest_.textStreams = textStreams;
-            }
-            this.manifest_.imageStreams = this.periodCombiner_.getImageStreams();
-
-            // Re-filter the manifest.  This will check any configured restrictions on
-            // new variants, and will pass any new init data to DrmEngine to ensure
-            // that key rotation works correctly.
-            // this.playerInterface_.filter(this.manifest_);
         }
     }
 
@@ -443,20 +438,23 @@ class DashMpdParser {
     * @private
     */
     parsePeriods_(context, getBaseUris, mpd) {
-        const presentationDuration = TXml.parseAttr(
-            mpd, 'mediaPresentationDuration', TXml.parseDuration);
+        const presentationDuration = xml_utils.parseAttr(
+            mpd, 'mediaPresentationDuration', xml_utils.parseDuration);
 
         const periods = [];
         let prevEnd = 0;
-        const periodNodes = TXml.findChildren(mpd, 'Period');
+        const periodNodes = xml_utils.findChildren(mpd, 'Period');
+
         for (let i = 0; i < periodNodes.length; i++) {
             const elem = periodNodes[i];
             const next = periodNodes[i + 1];
             const start = /** @type {number} */ (
-                TXml.parseAttr(elem, 'start', TXml.parseDuration, prevEnd));
+                xml_utils.parseAttr(elem, 'start', xml_utils.parseDuration, prevEnd));
             const periodId = elem.attributes['id'];
             const givenDuration =
-                TXml.parseAttr(elem, 'duration', TXml.parseDuration);
+                xml_utils.parseAttr(elem, 'duration', xml_utils.parseDuration);
+
+            logger.info(`Period ${periodId}: start: ${start} duration: ${givenDuration}`);
 
             let periodDuration = null;
             if (next) {
@@ -464,7 +462,7 @@ class DashMpdParser {
                 // of the following Period is the duration of the media content
                 // represented by this Period."
                 const nextStart =
-                    TXml.parseAttr(next, 'start', TXml.parseDuration);
+                    xml_utils.parseAttr(next, 'start', xml_utils.parseDuration);
                 if (nextStart != null) {
                     periodDuration = nextStart - start;
                 }
@@ -601,11 +599,11 @@ class DashMpdParser {
             logger.info(
                 'No Period ID given for Period with start time ' + periodInfo.start +
                 ',  Assigning a default');
-            context.period.id = '__shaka_period_' + periodInfo.start;
+            context.period.id = '_period_' + periodInfo.start;
         }
 
         const eventStreamNodes =
-            TXml.findChildren(periodInfo.node, 'EventStream');
+            xml_utils.findChildren(periodInfo.node, 'EventStream');
         // const availabilityStart =
         //     context.presentationTimeline.getSegmentAvailabilityStart();
 
@@ -615,7 +613,7 @@ class DashMpdParser {
         // }
 
         const adaptationSetNodes =
-            TXml.findChildren(periodInfo.node, 'AdaptationSet');
+            xml_utils.findChildren(periodInfo.node, 'AdaptationSet');
         const adaptationSets = adaptationSetNodes
             .map((node) => this.parseAdaptationSet_(context, node))
             .filter(Functional.isNotNull);
@@ -640,25 +638,25 @@ class DashMpdParser {
         const normalAdaptationSets = adaptationSets
             .filter((as) => { return !as.trickModeFor; });
 
-        // const trickModeAdaptationSets = adaptationSets
-        //     .filter((as) => { return as.trickModeFor; });
+        const trickModeAdaptationSets = adaptationSets
+            .filter((as) => { return as.trickModeFor; });
 
         // Attach trick mode tracks to normal tracks.
-        // for (const trickModeSet of trickModeAdaptationSets) {
-        //     const targetIds = trickModeSet.trickModeFor.split(' ');
-        //     for (const normalSet of normalAdaptationSets) {
-        //         if (targetIds.includes(normalSet.id)) {
-        //             for (const stream of normalSet.streams) {
-        //                 // There may be multiple trick mode streams, but we do not
-        //                 // currently support that.  Just choose one.
-        //                 // TODO: https://github.com/shaka-project/shaka-player/issues/1528
-        //                 stream.trickModeVideo = trickModeSet.streams.find((trickStream) =>
-        //                     shaka.util.MimeUtils.getNormalizedCodec(stream.codecs) ==
-        //                     shaka.util.MimeUtils.getNormalizedCodec(trickStream.codecs));
-        //             }
-        //         }
-        //     }
-        // }
+        for (const trickModeSet of trickModeAdaptationSets) {
+            const targetIds = trickModeSet.trickModeFor.split(' ');
+            for (const normalSet of normalAdaptationSets) {
+                if (targetIds.includes(normalSet.id)) {
+                    for (const stream of normalSet.streams) {
+                        // There may be multiple trick mode streams, but we do not
+                        // currently support that.  Just choose one.
+                        // TODO: https://github.com/shaka-project/shaka-player/issues/1528
+                        stream.trickModeVideo = trickModeSet.streams.find((trickStream) =>
+                            MimeUtils.getNormalizedCodec(stream.codecs) ==
+                            MimeUtils.getNormalizedCodec(trickStream.codecs));
+                    }
+                }
+            }
+        }
 
         const audioStreams = this.getStreamsFromSets_(
             this.config_.disableAudio,
@@ -721,17 +719,19 @@ class DashMpdParser {
         });
         getBaseUris = getBaseUris || parent.getBaseUris;
 
-        const parseNumber = TXml.parseNonNegativeInt;
-        const evalDivision = TXml.evalDivision;
+        const parseNumber = xml_utils.parseNonNegativeInt;
+        const evalDivision = xml_utils.evalDivision;
 
         const id = elem.attributes['id'];
-        const uriObjs = TXml.findChildren(elem, 'BaseURL');
+        const uriObjs = xml_utils.findChildren(elem, 'BaseURL');
+
         let calculatedBaseUris;
         let someLocationValid = false;
         if (this.contentSteeringManager_) {
             for (const uriObj of uriObjs) {
                 const serviceLocation = uriObj.attributes['serviceLocation'];
-                const uri = TXml.getContents(uriObj);
+                const uri = xml_utils.getContents(uriObj);
+
                 if (serviceLocation && uri) {
                     this.contentSteeringManager_.addLocation(
                         id, serviceLocation, uri);
@@ -740,7 +740,7 @@ class DashMpdParser {
             }
         }
         if (!someLocationValid || !this.contentSteeringManager_) {
-            calculatedBaseUris = uriObjs.map(TXml.getContents);
+            calculatedBaseUris = uriObjs.map(xml_utils.getContents);
         }
 
         const getFrameUris = () => {
@@ -760,51 +760,51 @@ class DashMpdParser {
         const mimeType = elem.attributes['mimeType'] || parent.mimeType;
         const codecs = elem.attributes['codecs'] || parent.codecs;
         const frameRate =
-            TXml.parseAttr(elem, 'frameRate', evalDivision) || parent.frameRate;
+            xml_utils.parseAttr(elem, 'frameRate', evalDivision) || parent.frameRate;
         const pixelAspectRatio =
             elem.attributes['sar'] || parent.pixelAspectRatio;
         const emsgSchemeIdUris = this.emsgSchemeIdUris_(
-            TXml.findChildren(elem, 'InbandEventStream'),
+            xml_utils.findChildren(elem, 'InbandEventStream'),
             parent.emsgSchemeIdUris);
         const audioChannelConfigs =
-            TXml.findChildren(elem, 'AudioChannelConfiguration');
+            xml_utils.findChildren(elem, 'AudioChannelConfiguration');
         const numChannels =
             this.parseAudioChannels_(audioChannelConfigs) || parent.numChannels;
         const audioSamplingRate =
-            TXml.parseAttr(elem, 'audioSamplingRate', parseNumber) ||
+            xml_utils.parseAttr(elem, 'audioSamplingRate', parseNumber) ||
             parent.audioSamplingRate;
 
         if (!contentType) {
             contentType = DashMpdParser.guessContentType_(mimeType, codecs);
         }
 
-        const segmentBase = TXml.findChild(elem, 'SegmentBase');
-        const segmentTemplate = TXml.findChild(elem, 'SegmentTemplate');
+        const segmentBase = xml_utils.findChild(elem, 'SegmentBase');
+        const segmentTemplate = xml_utils.findChild(elem, 'SegmentTemplate');
 
         // The availabilityTimeOffset is the sum of all @availabilityTimeOffset
         // values that apply to the adaptation set, via BaseURL, SegmentBase,
         // or SegmentTemplate elements.
         const segmentBaseAto = segmentBase ?
-            (TXml.parseAttr(segmentBase, 'availabilityTimeOffset',
-                TXml.parseFloat) || 0) : 0;
+            (xml_utils.parseAttr(segmentBase, 'availabilityTimeOffset',
+                xml_utils.parseFloat) || 0) : 0;
         const segmentTemplateAto = segmentTemplate ?
-            (TXml.parseAttr(segmentTemplate, 'availabilityTimeOffset',
-                TXml.parseFloat) || 0) : 0;
+            (xml_utils.parseAttr(segmentTemplate, 'availabilityTimeOffset',
+                xml_utils.parseFloat) || 0) : 0;
         const baseUriAto = uriObjs && uriObjs.length ?
-            (TXml.parseAttr(uriObjs[0], 'availabilityTimeOffset',
-                TXml.parseFloat) || 0) : 0;
+            (xml_utils.parseAttr(uriObjs[0], 'availabilityTimeOffset',
+                xml_utils.parseFloat) || 0) : 0;
 
         const availabilityTimeOffset = parent.availabilityTimeOffset + baseUriAto +
             segmentBaseAto + segmentTemplateAto;
 
         let segmentSequenceCadence = null;
         const segmentSequenceProperties =
-            TXml.findChild(elem, 'SegmentSequenceProperties');
+            xml_utils.findChild(elem, 'SegmentSequenceProperties');
         if (segmentSequenceProperties) {
-            const sap = TXml.findChild(segmentSequenceProperties, 'SAP');
+            const sap = xml_utils.findChild(segmentSequenceProperties, 'SAP');
             if (sap) {
-                segmentSequenceCadence = TXml.parseAttr(sap, 'cadence',
-                    TXml.parseInt);
+                segmentSequenceCadence = xml_utils.parseAttr(sap, 'cadence',
+                    xml_utils.parseInt);
             }
         }
 
@@ -813,10 +813,10 @@ class DashMpdParser {
                 () => ManifestParserUtils.resolveUris(getBaseUris(), getFrameUris()),
             segmentBase: segmentBase || parent.segmentBase,
             segmentList:
-                TXml.findChild(elem, 'SegmentList') || parent.segmentList,
+                xml_utils.findChild(elem, 'SegmentList') || parent.segmentList,
             segmentTemplate: segmentTemplate || parent.segmentTemplate,
-            width: TXml.parseAttr(elem, 'width', parseNumber) || parent.width,
-            height: TXml.parseAttr(elem, 'height', parseNumber) || parent.height,
+            width: xml_utils.parseAttr(elem, 'width', parseNumber) || parent.width,
+            height: xml_utils.parseAttr(elem, 'height', parseNumber) || parent.height,
             contentType: contentType,
             mimeType: mimeType,
             codecs: codecs,
@@ -960,7 +960,7 @@ class DashMpdParser {
         context.adaptationSet = this.createFrame_(elem, context.period, null);
 
         let main = false;
-        const roleElements = TXml.findChildren(elem, 'Role');
+        const roleElements = xml_utils.findChildren(elem, 'Role');
         const roleValues = roleElements.map((role) => {
             return role.attributes['value'];
         }).filter(Functional.isNotNull);
@@ -1024,7 +1024,7 @@ class DashMpdParser {
         };
 
         const essentialProperties =
-            TXml.findChildren(elem, 'EssentialProperty');
+            xml_utils.findChildren(elem, 'EssentialProperty');
         // ID of real AdaptationSet if this is a trick mode set:
         let trickModeFor = null;
         let isFastSwitching = false;
@@ -1048,7 +1048,7 @@ class DashMpdParser {
         }
 
         const supplementalProperties =
-            TXml.findChildren(elem, 'SupplementalProperty');
+            xml_utils.findChildren(elem, 'SupplementalProperty');
         for (const prop of supplementalProperties) {
             const schemeId = prop.attributes['schemeIdUri'];
             if (schemeId == transferCharacteristicsScheme) {
@@ -1058,7 +1058,7 @@ class DashMpdParser {
             }
         }
 
-        const accessibilities = TXml.findChildren(elem, 'Accessibility');
+        const accessibilities = xml_utils.findChildren(elem, 'Accessibility');
         const closedCaptions = new Map();
         /** @type {?shaka.media.ManifestParser.AccessibilityPurpose} */
         let accessibilityPurpose;
@@ -1168,7 +1168,7 @@ class DashMpdParser {
         }
 
         // const contentProtectionElems =
-        //     TXml.findChildren(elem, 'ContentProtection');
+        //     xml_utils.findChildren(elem, 'ContentProtection');
         // const contentProtection = ContentProtection.parseFromAdaptationSet(
         //     contentProtectionElems,
         //     this.config_.dash.ignoreDrmInfo,
@@ -1180,19 +1180,8 @@ class DashMpdParser {
         // This attribute is currently non-standard, but it is supported by Kaltura.
         let label = elem.attributes['label'];
 
-        // See DASH IOP 4.3 here https://dashif.org/docs/DASH-IF-IOP-v4.3.pdf (page 35)
-        const labelElements = TXml.findChildren(elem, 'Label');
-        if (labelElements && labelElements.length) {
-            // NOTE: Right now only one label field is supported.
-            const firstLabelElement = labelElements[0];
-            const textContent = TXml.getTextContents(firstLabelElement);
-            if (textContent) {
-                label = textContent;
-            }
-        }
-
         // Parse Representations into Streams.
-        const representations = TXml.findChildren(elem, 'Representation');
+        const representations = xml_utils.findChildren(elem, 'Representation');
         const streams = representations.map((representation) => {
             const parsedRepresentation = this.parseRepresentation_(context,
                 null, kind, language, label, main, roleValues,
@@ -1305,7 +1294,7 @@ class DashMpdParser {
         // To avoid NaN at the variant level on broken content, fall back to zero.
         // https://github.com/shaka-project/shaka-player/issues/938#issuecomment-317278180
         context.bandwidth =
-            TXml.parseAttr(node, 'bandwidth', TXml.parsePositiveInt) || 0;
+            xml_utils.parseAttr(node, 'bandwidth', xml_utils.parsePositiveInt) || 0;
 
         /** @type {?shaka.dash.DashParser.StreamInfo} */
         let streamInfo;
@@ -1365,7 +1354,7 @@ class DashMpdParser {
                 streamInfo = SegmentBase.createStreamInfo(
                     context, requestSegment, aesKey);
             } else if (context.representation.segmentList) {
-                streamInfo = shaka.dash.SegmentList.createStreamInfo(
+                streamInfo = SegmentList.createStreamInfo(
                     context, this.streamMap_, aesKey);
             } else if (context.representation.segmentTemplate) {
                 const hasManifest = !!this.manifest_;
@@ -1400,7 +1389,7 @@ class DashMpdParser {
         }
 
         // const contentProtectionElems =
-        //     TXml.findChildren(node, 'ContentProtection');
+        //     xml_utils.findChildren(node, 'ContentProtection');
         // const keyId = shaka.dash.ContentProtection.parseFromRepresentation(
         //     contentProtectionElems, contentProtection,
         //     this.config_.dash.ignoreDrmInfo,
@@ -1410,7 +1399,7 @@ class DashMpdParser {
         // Detect the presence of E-AC3 JOC audio content, using DD+JOC signaling.
         // See: ETSI TS 103 420 V1.2.1 (2018-10)
         const supplementalPropertyElems =
-            TXml.findChildren(node, 'SupplementalProperty');
+            xml_utils.findChildren(node, 'SupplementalProperty');
         const hasJoc = supplementalPropertyElems.some((element) => {
             const expectedUri = 'tag:dolby.com,2018:dash:EC3_ExtensionType:2018';
             const expectedValue = 'JOC';
@@ -1433,7 +1422,7 @@ class DashMpdParser {
         let tilesLayout;
         if (isImage) {
             const essentialPropertyElems =
-                TXml.findChildren(node, 'EssentialProperty');
+                xml_utils.findChildren(node, 'EssentialProperty');
             const thumbnailTileElem = essentialPropertyElems.find((element) => {
                 const expectedUris = [
                     'http://dashif.org/thumbnail_tile',
@@ -1635,14 +1624,14 @@ class DashMpdParser {
    * @private
    */
     parseServiceDescription_(mpd) {
-        const elem = TXml.findChild(mpd, 'ServiceDescription');
+        const elem = xml_utils.findChild(mpd, 'ServiceDescription');
 
         if (!elem) {
             return null;
         }
 
-        const latencyNode = TXml.findChild(elem, 'Latency');
-        const playbackRateNode = TXml.findChild(elem, 'PlaybackRate');
+        const latencyNode = xml_utils.findChild(elem, 'Latency');
+        const playbackRateNode = xml_utils.findChild(elem, 'PlaybackRate');
 
         if ((latencyNode && latencyNode.attributes['max']) || playbackRateNode) {
             const maxLatency = latencyNode && latencyNode.attributes['max'] ?
@@ -1677,68 +1666,68 @@ class DashMpdParser {
    * @return {!Promise.<number>}
    * @private
    */
-  async parseUtcTiming_(getBaseUris, elems) {
-    const schemesAndValues = elems.map((elem) => {
-      return {
-        scheme: elem.attributes['schemeIdUri'],
-        value: elem.attributes['value'],
-      };
-    });
+    async parseUtcTiming_(getBaseUris, elems) {
+        const schemesAndValues = elems.map((elem) => {
+            return {
+                scheme: elem.attributes['schemeIdUri'],
+                value: elem.attributes['value'],
+            };
+        });
 
-    // If there's nothing specified in the manifest, but we have a default from
-    // the config, use that.
-    const clockSyncUri = this.config_.dash.clockSyncUri;
-    if (!schemesAndValues.length && clockSyncUri) {
-      schemesAndValues.push({
-        scheme: 'urn:mpeg:dash:utc:http-head:2014',
-        value: clockSyncUri,
-      });
-    }
-
-    for (const sv of schemesAndValues) {
-      try {
-        const scheme = sv.scheme;
-        const value = sv.value;
-        switch (scheme) {
-          // See DASH IOP Guidelines Section 4.7
-          // https://bit.ly/DashIop3-2
-          // Some old ISO23009-1 drafts used 2012.
-          case 'urn:mpeg:dash:utc:http-head:2014':
-          case 'urn:mpeg:dash:utc:http-head:2012':
-            // eslint-disable-next-line no-await-in-loop
-            return await this.requestForTiming_(getBaseUris, value, 'HEAD');
-          case 'urn:mpeg:dash:utc:http-xsdate:2014':
-          case 'urn:mpeg:dash:utc:http-iso:2014':
-          case 'urn:mpeg:dash:utc:http-xsdate:2012':
-          case 'urn:mpeg:dash:utc:http-iso:2012':
-            // eslint-disable-next-line no-await-in-loop
-            return await this.requestForTiming_(getBaseUris, value, 'GET');
-          case 'urn:mpeg:dash:utc:direct:2014':
-          case 'urn:mpeg:dash:utc:direct:2012': {
-            const date = Date.parse(value);
-            return isNaN(date) ? 0 : (date - Date.now());
-          }
-
-          case 'urn:mpeg:dash:utc:http-ntp:2014':
-          case 'urn:mpeg:dash:utc:ntp:2014':
-          case 'urn:mpeg:dash:utc:sntp:2014':
-            logger.warn('NTP UTCTiming scheme is not supported');
-            break;
-          default:
-            logger.warn(
-                'Unrecognized scheme in UTCTiming element', scheme);
-            break;
+        // If there's nothing specified in the manifest, but we have a default from
+        // the config, use that.
+        const clockSyncUri = this.config_.dash.clockSyncUri;
+        if (!schemesAndValues.length && clockSyncUri) {
+            schemesAndValues.push({
+                scheme: 'urn:mpeg:dash:utc:http-head:2014',
+                value: clockSyncUri,
+            });
         }
-      } catch (e) {
-        logger.warn('Error fetching time from UTCTiming elem', e.message);
-      }
-    }
 
-    logger.warn(
-        'A UTCTiming element should always be given in live manifests! ' +
-        'This content may not play on clients with bad clocks!');
-    return 0;
-  }
+        for (const sv of schemesAndValues) {
+            try {
+                const scheme = sv.scheme;
+                const value = sv.value;
+                switch (scheme) {
+                    // See DASH IOP Guidelines Section 4.7
+                    // https://bit.ly/DashIop3-2
+                    // Some old ISO23009-1 drafts used 2012.
+                    case 'urn:mpeg:dash:utc:http-head:2014':
+                    case 'urn:mpeg:dash:utc:http-head:2012':
+                        // eslint-disable-next-line no-await-in-loop
+                        return await this.requestForTiming_(getBaseUris, value, 'HEAD');
+                    case 'urn:mpeg:dash:utc:http-xsdate:2014':
+                    case 'urn:mpeg:dash:utc:http-iso:2014':
+                    case 'urn:mpeg:dash:utc:http-xsdate:2012':
+                    case 'urn:mpeg:dash:utc:http-iso:2012':
+                        // eslint-disable-next-line no-await-in-loop
+                        return await this.requestForTiming_(getBaseUris, value, 'GET');
+                    case 'urn:mpeg:dash:utc:direct:2014':
+                    case 'urn:mpeg:dash:utc:direct:2012': {
+                        const date = Date.parse(value);
+                        return isNaN(date) ? 0 : (date - Date.now());
+                    }
+
+                    case 'urn:mpeg:dash:utc:http-ntp:2014':
+                    case 'urn:mpeg:dash:utc:ntp:2014':
+                    case 'urn:mpeg:dash:utc:sntp:2014':
+                        logger.warn('NTP UTCTiming scheme is not supported');
+                        break;
+                    default:
+                        logger.warn(
+                            'Unrecognized scheme in UTCTiming element', scheme);
+                        break;
+                }
+            } catch (e) {
+                logger.warn('Error fetching time from UTCTiming elem', e.message);
+            }
+        }
+
+        logger.warn(
+            'A UTCTiming element should always be given in live manifests! ' +
+            'This content may not play on clients with bad clocks!');
+        return 0;
+    }
 }
 
 module.exports = DashMpdParser;

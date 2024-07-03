@@ -2,7 +2,7 @@ const assert = require('assert');
 const ManifestParserUtils = require('../util/manifest_parser_utils');
 const logger = require('../util/logger');
 const Functional = require('../util/functional');
-const TXml = require('../util/txml');
+const xml_utils = require('../util/xml_utils');
 const AbortableOperation = require('../util/abortable_operation');
 const { time } = require('console');
 
@@ -161,7 +161,7 @@ class MpdUtils {
             periodDuration > 0, 'period duration must be a positive integer');
 
         // Alias.
-        const timePoints = TXml.findChildren(segmentTimeline, 'S');
+        const timePoints = xml_utils.findChildren(segmentTimeline, 'S');
 
         /** @type {!Array.<shaka.media.PresentationTimeline.TimeRange>} */
         const timeline = [];
@@ -170,12 +170,12 @@ class MpdUtils {
         for (let i = 0; i < timePoints.length; ++i) {
             const timePoint = timePoints[i];
             const next = timePoints[i + 1];
-            let t = TXml.parseAttr(timePoint, 't', TXml.parseNonNegativeInt);
+            let t = xml_utils.parseAttr(timePoint, 't', xml_utils.parseNonNegativeInt);
             const d =
-                TXml.parseAttr(timePoint, 'd', TXml.parseNonNegativeInt);
-            const r = TXml.parseAttr(timePoint, 'r', TXml.parseInt);
+                xml_utils.parseAttr(timePoint, 'd', xml_utils.parseNonNegativeInt);
+            const r = xml_utils.parseAttr(timePoint, 'r', xml_utils.parseInt);
 
-            const k = TXml.parseAttr(timePoint, 'k', TXml.parseInt);
+            const k = xml_utils.parseAttr(timePoint, 'k', xml_utils.parseInt);
 
             const partialSegments = k || 0;
 
@@ -197,7 +197,7 @@ class MpdUtils {
             if (repeat < 0) {
                 if (next) {
                     const nextStartTime =
-                        TXml.parseAttr(next, 't', TXml.parseNonNegativeInt);
+                        xml_utils.parseAttr(next, 't', xml_utils.parseNonNegativeInt);
                     if (nextStartTime == null) {
                         logger.warning(
                             'An "S" element cannot have a negative repeat',
@@ -290,17 +290,17 @@ class MpdUtils {
             this.inheritAttribute(context, callback, 'timescale');
         let timescale = 1;
         if (timescaleStr) {
-            timescale = TXml.parsePositiveInt(timescaleStr) || 1;
+            timescale = xml_utils.parsePositiveInt(timescaleStr) || 1;
         }
 
         const durationStr =
             this.inheritAttribute(context, callback, 'duration');
-        let segmentDuration = TXml.parsePositiveInt(durationStr || '');
+        let segmentDuration = xml_utils.parsePositiveInt(durationStr || '');
         const ContentType = ManifestParserUtils.ContentType;
         // TODO: The specification is not clear, check this once it is resolved:
         // https://github.com/Dash-Industry-Forum/DASH-IF-IOP/issues/404
         if (context.representation.contentType == ContentType.IMAGE) {
-            segmentDuration = TXml.parseFloat(durationStr || '');
+            segmentDuration = xml_utils.parseFloat(durationStr || '');
         }
         if (segmentDuration) {
             segmentDuration /= timescale;
@@ -311,7 +311,7 @@ class MpdUtils {
         const unscaledPresentationTimeOffset =
             Number(this.inheritAttribute(context, callback,
                 'presentationTimeOffset')) || 0;
-        let startNumber = TXml.parseNonNegativeInt(startNumberStr || '');
+        let startNumber = xml_utils.parseNonNegativeInt(startNumberStr || '');
         if (startNumberStr == null || startNumber == null) {
             startNumber = 1;
         }
@@ -396,7 +396,7 @@ class MpdUtils {
 
         let result = null;
         for (const node of nodes) {
-            result = TXml.findChild(node, child);
+            result = xml_utils.findChild(node, child);
             if (result) {
                 break;
             }
@@ -423,15 +423,15 @@ class MpdUtils {
     //     linkDepth) {
     //     const NS = this.XlinkNamespaceUri_;
 
-    //     const xlinkHref = TXml.getAttributeNS(element, NS, 'href');
+    //     const xlinkHref = xml_utils.getAttributeNS(element, NS, 'href');
     //     const xlinkActuate =
-    //         TXml.getAttributeNS(element, NS, 'actuate') || 'onRequest';
+    //         xml_utils.getAttributeNS(element, NS, 'actuate') || 'onRequest';
 
     //     // Remove the xlink properties, so it won't download again
     //     // when re-processed.
     //     for (const key of Object.keys(element.attributes)) {
     //         const segs = key.split(':');
-    //         const namespace = TXml.getKnownNameSpace(NS);
+    //         const namespace = xml_utils.getKnownNameSpace(NS);
     //         if (segs[0] == namespace) {
     //             delete element.attributes[key];
     //         }
@@ -473,7 +473,7 @@ class MpdUtils {
     //             // top-level element.  If there are multiple roots, it will be
     //             // rejected.
     //             const rootElem =
-    //                 TXml.parseXml(response.data, element.tagName);
+    //                 xml_utils.parseXml(response.data, element.tagName);
     //             if (!rootElem) {
     //                 // It was not valid XML.
     //                 return shaka.util.AbortableOperation.failed(new Error(
@@ -490,7 +490,7 @@ class MpdUtils {
     //             // Move the children of the loaded xml into the current element.
     //             while (rootElem.children.length) {
     //                 const child = rootElem.children.shift();
-    //                 if (TXml.isNode(child)) {
+    //                 if (xml_utils.isNode(child)) {
     //                     child.parent = element;
     //                 }
     //                 element.children.push(child);
@@ -524,10 +524,10 @@ class MpdUtils {
     //     failGracefully, baseUri, networkingEngine,
     //     linkDepth = 0) {
     //     const MpdUtils = shaka.dash.MpdUtils;
-    //     const TXml = shaka.util.TXml;
+    //     const xml_utils = shaka.util.xml_utils;
     //     const NS = MpdUtils.XlinkNamespaceUri_;
 
-    //     if (TXml.getAttributeNS(element, NS, 'href')) {
+    //     if (xml_utils.getAttributeNS(element, NS, 'href')) {
     //         let handled = MpdUtils.handleXlinkInElement_(
     //             element, retryParameters, failGracefully,
     //             baseUri, networkingEngine, linkDepth);
@@ -546,9 +546,9 @@ class MpdUtils {
     //     }
 
     //     const childOperations = [];
-    //     for (const child of shaka.util.TXml.getChildNodes(element)) {
+    //     for (const child of shaka.util.xml_utils.getChildNodes(element)) {
     //         const resolveToZeroString = 'urn:mpeg:dash:resolve-to-zero:2013';
-    //         if (TXml.getAttributeNS(child, NS, 'href') == resolveToZeroString) {
+    //         if (xml_utils.getAttributeNS(child, NS, 'href') == resolveToZeroString) {
     //             // This is a 'resolve to zero' code; it means the element should
     //             // be removed, as specified by the mpeg-dash rules for xlink.
     //             element.children = element.children.filter(

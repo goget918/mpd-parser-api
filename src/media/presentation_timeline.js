@@ -364,7 +364,7 @@ class PresentationTimeline {
     this.maxSegmentDuration_ = Math.max(
         this.maxSegmentDuration_, maxSegmentDuration);
 
-    logger.info('notifyNewSegmentDuration:',
+    logger.debug('notifyNewSegmentDuration:',
         'maxSegmentDuration=' + this.maxSegmentDuration_);
   }
 

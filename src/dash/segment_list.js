@@ -7,7 +7,7 @@ const SegmentIndex = require('../media/segment_index');
 const Functional = require('../util/functional');
 const ManifestParserUtils = require('../util/manifest_parser_utils');
 const StringUtils = require('../util/string_utils');
-const TXml = require('../util/txml');
+const xml_utils = require('../util/xml_utils');
 
 /**
  * @summary A set of functions for parsing SegmentList elements.
@@ -309,7 +309,7 @@ class SegmentList {
     // Search each SegmentList for one with at least one SegmentURL element,
     // select the first one, and convert each SegmentURL element to a tuple.
     return segmentLists
-      .map((node) => { return TXml.findChildren(node, 'SegmentURL'); })
+      .map((node) => { return xml_utils.findChildren(node, 'SegmentURL'); })
       .reduce((all, part) => { return all.length > 0 ? all : part; })
       .map((urlNode) => {
         if (urlNode.attributes['indexRange'] &&
@@ -322,8 +322,8 @@ class SegmentList {
         }
 
         const uri = StringUtils.htmlUnescape(urlNode.attributes['media']);
-        const range = TXml.parseAttr(
-          urlNode, 'mediaRange', TXml.parseRange,
+        const range = xml_utils.parseAttr(
+          urlNode, 'mediaRange', xml_utils.parseRange,
           { start: 0, end: null });
         return { mediaUri: uri, start: range.start, end: range.end };
       });
