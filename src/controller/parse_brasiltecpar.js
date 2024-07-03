@@ -68,7 +68,8 @@ const ParserBrasiltecpar = async (req, res) => {
             });
 
             if (segmentIndex.indexes_) {
-                for (let i = 0; i < segmentIndex.indexes_[0].references.length; i++) {
+                const refNum = segmentIndex.indexes_[0].references.length;
+                for (let i = refNum - nSegments > 0 ? refNum - nSegments : 0; i < refNum; i++) {
                     const reference = segmentIndex.indexes_[0].references[i];
                     const segmentUri = reference.getUrisInner()[0];
                     const segmentNum = toEpochTime(presentationStartTime, reference.startTime / timescale);
@@ -112,11 +113,6 @@ const ParserBrasiltecpar = async (req, res) => {
 
         logger.info(`returning ${responseData.video.length} video segments and ${responseData.audio.length} audio ones for latest ${timeDuration} seconds..`);
 
-        // combiine responseData.video.[0] and responseData.video.slice(-nSegments) into a single array responseData.video
-        videoFiltered = [];
-        audioFiltered = [];
-        responseData.video = videoFiltered.concat(responseData.video[0], responseData.video.slice(-nSegments));
-        responseData.audio = audioFiltered.concat(responseData.audio[0], responseData.audio.slice(-nSegments));
         res.json(responseData);
     } catch (err) {
         console.error(err);
