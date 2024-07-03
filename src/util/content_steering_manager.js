@@ -80,7 +80,7 @@ class ContentSteeringManager {
   }
 
   clearPreviousLocations() {
-    this.locations.clear();
+    this.locations_.clear();
   }
 
   /**
@@ -139,7 +139,7 @@ class ContentSteeringManager {
           }
         }
       }
-  
+
       const now = Date.now();
       for (const uri of this.bannedLocations_.keys()) {
         const bannedUntil = this.bannedLocations_.get(uri);
@@ -179,6 +179,7 @@ class ContentSteeringManager {
       if (ignoreBaseUrls) {
         return locations;
       }
+
       return ManifestParserUtils.resolveUris(
           this.baseUris_, locations);
     }

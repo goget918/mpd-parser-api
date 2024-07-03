@@ -2,11 +2,11 @@ const logger = require('./logger');
 const StringUtils = require('./string_utils');
 
 /**
- * This code is a modified version of the tXml library.
+ * This code is a modified version of the xml_utils library.
  *
  * @author: Tobias Nickel
  * created: 06.04.2015
- * https://github.com/TobiasNickel/tXml
+ * https://github.com/TobiasNickel/xml_utils
  */
 
 /**
@@ -30,7 +30,7 @@ const StringUtils = require('./string_utils');
  */
 
 
-class TXml {
+class xml_utils {
   static knownNameSpaces_ = new Map([]);
   /**
    * Parse some data
@@ -40,7 +40,7 @@ class TXml {
    */
   static parseXml(data, expectedRootElemName) {
     const xmlString = StringUtils.fromBytesAutoDetect(data);
-    return TXml.parseXmlString(xmlString, expectedRootElemName);
+    return xml_utils.parseXmlString(xmlString, expectedRootElemName);
   }
 
   /**
@@ -50,7 +50,7 @@ class TXml {
    * @return {shaka.extern.xml.Node | null}
    */
   static parseXmlString(xmlString, expectedRootElemName) {
-    const result = TXml.parse(xmlString);
+    const result = xml_utils.parse(xmlString);
     if (!expectedRootElemName && result.length) {
       return result[0];
     }
@@ -69,8 +69,8 @@ class TXml {
    * @return {string}
    */
   static getKnownNameSpace(schema) {
-    if (TXml.knownNameSpaces_.has(schema)) {
-      return TXml.knownNameSpaces_.get(schema);
+    if (xml_utils.knownNameSpaces_.has(schema)) {
+      return xml_utils.knownNameSpaces_.get(schema);
     }
     return '';
   }
@@ -81,7 +81,7 @@ class TXml {
    * @param {string} NS
    */
   static setKnownNameSpace(schema, NS) {
-    TXml.knownNameSpaces_.set(schema, NS);
+    xml_utils.knownNameSpaces_.set(schema, NS);
   }
 
   /**
@@ -275,7 +275,7 @@ class TXml {
           }
           if (name.startsWith('xmlns:')) {
             const segs = name.split(':');
-            TXml.setKnownNameSpace(
+            xml_utils.setKnownNameSpace(
                 /** @type {string} */ (value), segs[1]);
           }
           if (tagName === 'tt' &&
@@ -325,9 +325,9 @@ class TXml {
   }
 
   /**
-   * Verifies if the element is a TXml node.
+   * Verifies if the element is a xml_utils node.
    * @param {!shaka.extern.xml.Node} elem The XML element.
-   * @return {!boolean} Is the element a TXml node
+   * @return {!boolean} Is the element a xml_utils node
    */
   static isNode(elem) {
     return !!(elem.tagName);
@@ -410,7 +410,7 @@ class TXml {
     }
 
     // Read merged text content from all text nodes.
-    let text = TXml.getTextContents(node);
+    let text = xml_utils.getTextContents(node);
     if (text) {
       text = text.trim();
     }
@@ -430,7 +430,7 @@ class TXml {
     }
     if (elem.children) {
       for (const child of elem.children) {
-        TXml.getElementsByTagName(child, name, found);
+        xml_utils.getElementsByTagName(child, name, found);
       }
     }
     return found;
@@ -446,7 +446,7 @@ class TXml {
    *   child XML element with the given tag name.
    */
   static findChild(elem, name) {
-    const children = TXml.findChildren(elem, name);
+    const children = xml_utils.findChildren(elem, name);
     if (children.length != 1) {
       return null;
     }
@@ -464,7 +464,7 @@ class TXml {
    *   child XML element with the given tag name.
    */
   static findChildNS(elem, ns, name) {
-    const children = TXml.findChildrenNS(elem, ns, name);
+    const children = xml_utils.findChildrenNS(elem, ns, name);
     if (children.length != 1) {
       return null;
     }
@@ -501,7 +501,7 @@ class TXml {
    * @return {?string} The attribute's value, or null if not present.
    */
   static getAttributeNS(elem, ns, name) {
-    const schemaNS = TXml.getKnownNameSpace(ns);
+    const schemaNS = xml_utils.getKnownNameSpace(ns);
     // Think this is equivalent
     const attribute = elem.attributes[`${schemaNS}:${name}`];
     return attribute || null;
@@ -515,7 +515,7 @@ class TXml {
    * @return {!Array.<!shaka.extern.xml.Node>} The child XML elements.
    */
   static findChildrenNS(elem, ns, name) {
-    const schemaNS = TXml.getKnownNameSpace(ns);
+    const schemaNS = xml_utils.getKnownNameSpace(ns);
     const found = [];
     if (elem.children) {
       for (const child of elem.children) {
@@ -536,7 +536,7 @@ class TXml {
    */
   static getAttributeNSList(elem, nsList, name) {
     for (const ns of nsList) {
-      const attr = TXml.getAttributeNS(
+      const attr = xml_utils.getAttributeNS(
           elem, ns, name,
       );
       if (attr) {
@@ -720,4 +720,4 @@ class TXml {
   }
 };
 
-module.exports = TXml;
+module.exports = xml_utils;

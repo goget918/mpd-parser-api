@@ -1,5 +1,5 @@
 const MpdUtils = require('./mdp_utils');
-const TXml = require('../util/txml');
+const xml_utils = require('../util/xml_utils');
 const ManifestParserUtils = require('../util/manifest_parser_utils');
 const InitSegmentReference = require('../media/segment_reference');
 const Mp4SegmentIndexParser = require('../media/mp4_segment_index_parser');
@@ -35,7 +35,7 @@ class SegmentBase {
 
     let startByte = 0;
     let endByte = null;
-    const range = TXml.parseAttr(initialization, 'range', TXml.parseRange);
+    const range = xml_utils.parseAttr(initialization, 'range', xml_utils.parseRange);
     if (range) {
       startByte = range.start;
       endByte = range.end;
@@ -73,7 +73,7 @@ class SegmentBase {
         context, this.fromInheritance_, 'timescale');
     let timescale = 1;
     if (timescaleStr) {
-      timescale = TXml.parsePositiveInt(timescaleStr) || 1;
+      timescale = xml_utils.parsePositiveInt(timescaleStr) || 1;
     }
 
     const scaledPresentationTimeOffset =
@@ -198,10 +198,10 @@ class SegmentBase {
     const indexRangeElem = MpdUtils.inheritAttribute(
         context, SegmentBase.fromInheritance_, 'indexRange');
 
-    let indexRange = TXml.parseRange(indexRangeElem || '');
+    let indexRange = xml_utils.parseRange(indexRangeElem || '');
     if (representationIndex) {
-      indexRange = TXml.parseAttr(
-          representationIndex, 'range', TXml.parseRange, indexRange);
+      indexRange = xml_utils.parseAttr(
+          representationIndex, 'range', xml_utils.parseRange, indexRange);
     }
     return indexRange;
   }

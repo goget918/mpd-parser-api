@@ -66,8 +66,7 @@ class SegmentTemplate {
     assert(context.representation.segmentTemplate,
       'Should only be called with SegmentTemplate');
 
-    const initSegmentReference =
-      SegmentTemplate.createInitSegment_(context, aesKey);
+    const initSegmentReference = this.createInitSegment_(context, aesKey);
 
     /** @type {shaka.dash.SegmentTemplate.SegmentTemplateInfo} */
     const info = SegmentTemplate.parseSegmentTemplateInfo_(context);
@@ -296,7 +295,7 @@ class SegmentTemplate {
     const resolvedUris = ManifestParserUtils.resolveUris(
       context.representation.getBaseUris(), [filledTemplate]);
 
-    return shaka.dash.SegmentBase.generateSegmentIndexFromUris(
+    return SegmentBase.generateSegmentIndexFromUris(
       context, requestSegment, init, resolvedUris, 0, null,
       info.scaledPresentationTimeOffset);
   }
